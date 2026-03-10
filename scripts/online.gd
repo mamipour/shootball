@@ -13,7 +13,7 @@ signal timer_sync(remaining: float)
 signal opponent_info_received(opp_name: String, opp_avatar: int)
 signal connection_error(msg: String)
 
-const SERVER_HOST := "127.0.0.1"
+const SERVER_HOST := "shootball.avardgah.com"
 const SERVER_PORT := 7350
 const SERVER_KEY := "defaultkey"
 const USE_SSL := false
@@ -262,4 +262,3 @@ func _generate_uuid() -> String:
 		if i == 7 or i == 11 or i == 15 or i == 19:
 			uuid += "-"
 	return uuid
-

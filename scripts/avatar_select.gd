@@ -16,7 +16,8 @@ func _ready():
 	title.text = "Choose Your Avatar"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.position = Vector2(0, 20)
-	title.size = Vector2(1280, 50)
+	title.set_anchors_preset(PRESET_TOP_WIDE)
+	title.size = Vector2(0, 50)
 	title.add_theme_font_size_override("font_size", 36)
 	title.add_theme_color_override("font_color", Color(1.0, 0.88, 0.25))
 	add_child(title)
@@ -27,7 +28,8 @@ func _ready():
 	back_btn.text = "  Back  "
 	back_btn.add_theme_font_size_override("font_size", 22)
 	back_btn.custom_minimum_size = Vector2(200, 48)
-	back_btn.position = Vector2(540, 660)
+	var vp_size := get_viewport().get_visible_rect().size
+	back_btn.position = Vector2((vp_size.x - 200) / 2.0, vp_size.y - 60)
 	back_btn.pressed.connect(_on_back)
 	add_child(back_btn)
 
@@ -40,8 +42,9 @@ func _build_avatar_grid():
 	var grid_w: float = cols_per_row * (btn_size + spacing) - spacing
 	var total_rows := ceili(float(count) / cols_per_row)
 	var grid_h: float = total_rows * (btn_size + spacing) - spacing
-	var offset_x: float = (1280.0 - grid_w) / 2.0
-	var offset_y: float = (720.0 - grid_h) / 2.0 + 15.0
+	var vp := get_viewport().get_visible_rect().size
+	var offset_x: float = (vp.x - grid_w) / 2.0
+	var offset_y: float = (vp.y - grid_h) / 2.0 + 15.0
 
 	for i in range(count):
 		var tex: Texture2D = load(Constants.AVATAR_DIR + "avatar_%02d.png" % i)
