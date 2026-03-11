@@ -191,6 +191,9 @@ func _on_match_started(p_round: int, p_aim_time: float):
 	shot_map.clear()
 	for p in my_pills:
 		p.is_selected = false
+	if round_num == 1:
+		selected_pill = my_pills[2]
+		my_pills[2].is_selected = true
 	print("[OnlineFootball] Round %d started" % round_num)
 
 func _on_multi_shots_received(p1_shots: Array, p2_shots: Array):
