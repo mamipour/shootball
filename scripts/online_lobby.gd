@@ -5,7 +5,8 @@ var find_btn: Button
 var cancel_btn: Button
 var back_btn: Button
 var friends_btn: Button
-var mode_option: OptionButton
+var mode_buttons: Array[Button] = []
+var selected_mode_idx: int = 0
 var searching := false
 
 const MODE_SCENES := {
@@ -17,6 +18,11 @@ const MODE_SCENES := {
 }
 const MODE_LABELS := ["CoinBall", "Football", "Battle Arena", "Volleyball", "Curling"]
 const MODE_KEYS := ["coinball", "football", "battle", "volleyball", "curling"]
+
+const COLOR_SELECTED := Color(1.0, 0.88, 0.25)
+const COLOR_UNSELECTED := Color(0.55, 0.55, 0.65)
+const COLOR_BG_SELECTED := Color(0.22, 0.20, 0.30)
+const COLOR_BG_UNSELECTED := Color(0.12, 0.12, 0.16)
 
 func _ready():
 	var bg := ColorRect.new()
@@ -40,31 +46,29 @@ func _ready():
 	vbox.add_child(title)
 
 	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(0, 10)
+	spacer.custom_minimum_size = Vector2(0, 6)
 	vbox.add_child(spacer)
 
-	# Mode selector
+	# Mode buttons row
 	var mode_row := HBoxContainer.new()
 	mode_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	mode_row.add_theme_constant_override("separation", 10)
+	mode_row.add_theme_constant_override("separation", 8)
 	vbox.add_child(mode_row)
 
-	var mode_lbl := Label.new()
-	mode_lbl.text = "Game Mode:"
-	mode_lbl.add_theme_font_size_override("font_size", 20)
-	mode_lbl.add_theme_color_override("font_color", Color(0.8, 0.8, 0.9))
-	mode_row.add_child(mode_lbl)
-
-	mode_option = OptionButton.new()
-	for i in range(MODE_LABELS.size()):
-		mode_option.add_item(MODE_LABELS[i], i)
-	mode_option.add_theme_font_size_override("font_size", 20)
-	mode_option.custom_minimum_size = Vector2(180, 40)
 	var saved_idx := MODE_KEYS.find(Online.selected_mode)
 	if saved_idx >= 0:
-		mode_option.selected = saved_idx
-	mode_option.item_selected.connect(_on_mode_selected)
-	mode_row.add_child(mode_option)
+		selected_mode_idx = saved_idx
+
+	for i in range(MODE_LABELS.size()):
+		var btn := Button.new()
+		btn.text = "  %s  " % MODE_LABELS[i]
+		btn.add_theme_font_size_override("font_size", 17)
+		btn.custom_minimum_size = Vector2(0, 38)
+		btn.pressed.connect(_on_mode_btn_pressed.bind(i))
+		mode_row.add_child(btn)
+		mode_buttons.append(btn)
+
+	_update_mode_buttons()
 
 	var spacer1b := Control.new()
 	spacer1b.custom_minimum_size = Vector2(0, 4)
@@ -119,8 +123,44 @@ func _ready():
 
 	_ensure_connected()
 
-func _on_mode_selected(idx: int):
+func _on_mode_btn_pressed(idx: int):
+	selected_mode_idx = idx
 	Online.selected_mode = MODE_KEYS[idx]
+	_update_mode_buttons()
+
+func _update_mode_buttons():
+	for i in range(mode_buttons.size()):
+		var btn: Button = mode_buttons[i]
+		var style := StyleBoxFlat.new()
+		style.corner_radius_top_left = 6
+		style.corner_radius_top_right = 6
+		style.corner_radius_bottom_left = 6
+		style.corner_radius_bottom_right = 6
+		style.content_margin_left = 10
+		style.content_margin_right = 10
+		style.content_margin_top = 4
+		style.content_margin_bottom = 4
+
+		if i == selected_mode_idx:
+			style.bg_color = COLOR_BG_SELECTED
+			style.border_color = COLOR_SELECTED
+			style.border_width_bottom = 3
+			btn.add_theme_color_override("font_color", COLOR_SELECTED)
+		else:
+			style.bg_color = COLOR_BG_UNSELECTED
+			style.border_color = Color(0.3, 0.3, 0.38)
+			style.border_width_bottom = 1
+			btn.add_theme_color_override("font_color", COLOR_UNSELECTED)
+
+		btn.add_theme_stylebox_override("normal", style)
+
+		var hover_style := style.duplicate()
+		hover_style.bg_color = COLOR_BG_SELECTED if i == selected_mode_idx else Color(0.16, 0.16, 0.22)
+		btn.add_theme_stylebox_override("hover", hover_style)
+
+		var pressed_style := style.duplicate()
+		pressed_style.bg_color = Color(0.28, 0.26, 0.36)
+		btn.add_theme_stylebox_override("pressed", pressed_style)
 
 func _ensure_connected():
 	if Online.user_id == "":
@@ -137,15 +177,17 @@ func _on_find_match():
 	searching = true
 	find_btn.visible = false
 	cancel_btn.visible = true
-	mode_option.disabled = true
-	status_label.text = "Searching for %s opponent..." % MODE_LABELS[mode_option.selected]
+	for btn in mode_buttons:
+		btn.disabled = true
+	status_label.text = "Searching for %s opponent..." % MODE_LABELS[selected_mode_idx]
 	await Online.find_match()
 
 func _on_cancel():
 	searching = false
 	find_btn.visible = true
 	cancel_btn.visible = false
-	mode_option.disabled = false
+	for btn in mode_buttons:
+		btn.disabled = false
 	status_label.text = "Ready to play"
 	await Online.cancel_matchmaking()
 
@@ -159,7 +201,8 @@ func _on_error(msg: String):
 	searching = false
 	find_btn.visible = true
 	cancel_btn.visible = false
-	mode_option.disabled = false
+	for btn in mode_buttons:
+		btn.disabled = false
 
 func _on_back():
 	if searching:
