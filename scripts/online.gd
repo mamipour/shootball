@@ -40,6 +40,7 @@ const OP_PLAYER_READY := 6
 const OP_OPPONENT_INFO := 7
 const OP_PLAYER_LEFT := 8
 const OP_TIMER_SYNC := 9
+const OP_ROUND_RESULT := 10
 
 func _ready():
 	client = Nakama.create_client(SERVER_KEY, SERVER_HOST, SERVER_PORT, "http")
@@ -160,12 +161,11 @@ func send_ready() -> void:
 func report_round_result(scorer_id: String) -> void:
 	if not socket or match_id == "":
 		return
-	# Use match signal to inform server of physics result
 	var data := JSON.stringify({
 		"type": "round_result",
 		"scorer": scorer_id,
 	})
-	await socket.rpc_async("match_signal", data)
+	socket.send_match_state_async(match_id, OP_ROUND_RESULT, data)
 
 func leave_match() -> void:
 	if socket and match_id != "":
