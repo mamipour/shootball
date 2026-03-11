@@ -2,9 +2,38 @@ extends Node2D
 
 enum Phase { AIMING, EXECUTING, SETTLING, GOAL_SCORED, GAME_OVER }
 
+class _BallBody extends RigidBody2D:
+	var ball_texture: Texture2D = null
+	var _reset_pos: Vector2 = Vector2.ZERO
+	var _has_reset: bool = false
+
+	func reset_to(pos: Vector2):
+		_reset_pos = pos
+		_has_reset = true
+
+	func _integrate_forces(state: PhysicsDirectBodyState2D):
+		if _has_reset:
+			state.transform = Transform2D(0, _reset_pos)
+			state.linear_velocity = Vector2.ZERO
+			state.angular_velocity = 0.0
+			_has_reset = false
+
+	func _draw():
+		var r: float = Constants.BALL_RADIUS
+		draw_circle(Vector2(2, 2), r, Color(0.0, 0.0, 0.0, 0.2))
+		if ball_texture != null:
+			var size: float = r * 2.0
+			draw_texture_rect(ball_texture, Rect2(Vector2(-r, -r), Vector2(size, size)), false)
+		else:
+			draw_circle(Vector2.ZERO, r, Color.WHITE)
+		draw_arc(Vector2.ZERO, r, 0, TAU, 64, Color(0.3, 0.3, 0.3, 0.6), 2.0, true)
+	func _process(_delta: float):
+		queue_redraw()
+
 # ── Nodes ──
 var player_pills: Array = []
 var ai_pills: Array = []
+var ball: RigidBody2D
 
 # ── HUD ──
 var hud_layer: CanvasLayer
@@ -16,40 +45,28 @@ var center_msg: Label
 var restart_label: Label
 var quit_btn: Button
 var quit_confirm: Panel
+
 # ── State ──
 var phase: Phase = Phase.AIMING
 var player_score: int = 0
 var ai_score: int = 0
 var round_num: int = 0
 
-# ── Aiming (player) ──
-var sel_idx: int = -1
+# ── Multi-shot aiming ──
+var selected_pill: Pill = null
+var shot_map: Dictionary = {}
 var dragging: bool = false
 var drag_start := Vector2.ZERO
 var drag_cur := Vector2.ZERO
 var aim_dir := Vector2.ZERO
 var aim_pow: float = 0.0
-var aim_valid: bool = false
-var aim_locked: bool = false
+
+# ── AI decisions ──
+var ai_shots: Array = []
+var ai_decided: bool = false
 
 # ── Timer ──
 var aim_timer: float = 0.0
-
-# ── AI decision (stored as plain vars, not Dictionary) ──
-var ai_decided: bool = false
-var ai_shot_idx: int = -1
-var ai_shot_dir := Vector2.ZERO
-var ai_shot_power: float = 0.0
-
-# ── Assets ──
-var grass_texture: Texture2D = null
-var goal_left_tex: Texture2D = null
-var goal_right_tex: Texture2D = null
-
-# ── Audio ──
-var stadium_music: AudioStreamPlayer
-var goal_sfx: AudioStreamPlayer
-var win_sfx: AudioStreamPlayer
 
 # ── Settling ──
 var settle_timer: float = 0.0
@@ -58,6 +75,17 @@ var settle_timer: float = 0.0
 var goal_timer: float = 0.0
 var scorer: String = ""
 var goal_this_round: bool = false
+
+# ── Assets ──
+var grass_texture: Texture2D = null
+var goal_left_tex: Texture2D = null
+var goal_right_tex: Texture2D = null
+var ball_texture: Texture2D = null
+
+# ── Audio ──
+var stadium_music: AudioStreamPlayer
+var goal_sfx: AudioStreamPlayer
+var win_sfx: AudioStreamPlayer
 
 # ═══════════════════════════════════════════════════════════════
 # LIFECYCLE
@@ -68,8 +96,10 @@ func _ready():
 	grass_texture = load("res://assets/groundGrass_mownWide_vector.svg")
 	goal_left_tex = load("res://assets/goal_left.svg")
 	goal_right_tex = load("res://assets/goal_right.svg")
+	ball_texture = load("res://assets/Soccer_ball.svg")
 	_setup_audio()
 	_build_walls()
+	_build_ball()
 	_build_pills()
 	_assign_avatars()
 	_build_hud()
@@ -96,8 +126,7 @@ func _setup_audio():
 func _load_avatar(idx: int) -> Texture2D:
 	if idx < 0 or idx >= Constants.AVATAR_COUNT:
 		return null
-	var path := Constants.AVATAR_DIR + "avatar_%02d.png" % idx
-	return load(path)
+	return load(Constants.AVATAR_DIR + "avatar_%02d.png" % idx)
 
 func _pick_random_ai_avatar():
 	var count := Constants.AVATAR_COUNT
@@ -121,10 +150,10 @@ func _process(delta: float):
 	match phase:
 		Phase.AIMING:
 			aim_timer -= delta
-			if not ai_decided and aim_timer <= 2.0:
+			if not ai_decided and aim_timer <= 3.0:
 				_ai_decide()
 			if aim_timer <= 0.0:
-				_fire_shots()
+				_fire_all_shots()
 		Phase.EXECUTING:
 			settle_timer += delta
 			_check_goals()
@@ -145,7 +174,7 @@ func _process(delta: float):
 				if player_score >= Constants.WIN_SCORE or ai_score >= Constants.WIN_SCORE:
 					_show_game_over()
 				else:
-					_reset_pills()
+					_reset_all()
 					_start_round()
 		Phase.GAME_OVER:
 			pass
@@ -160,211 +189,190 @@ func _process(delta: float):
 func _start_round():
 	round_num += 1
 	phase = Phase.AIMING
-	aim_timer = Constants.AIM_TIME
-	sel_idx = -1
+	aim_timer = Constants.FOOTBALL_AIM_TIME
+	selected_pill = null
+	shot_map.clear()
 	dragging = false
-	aim_locked = false
-	aim_valid = false
 	aim_pow = 0.0
+	aim_dir = Vector2.ZERO
 	ai_decided = false
-	ai_shot_idx = -1
-	ai_shot_dir = Vector2.ZERO
-	ai_shot_power = 0.0
-	goal_this_round = false
+	ai_shots.clear()
 	settle_timer = 0.0
+	goal_this_round = false
 	center_msg.visible = false
 	restart_label.visible = false
+
 	for p in player_pills:
 		p.is_selected = false
 
 # ═══════════════════════════════════════════════════════════════
-# AI (smart multi-strategy)
+# AI — push the ball toward player's goal
 # ═══════════════════════════════════════════════════════════════
 
-func _ai_is_path_blocked(origin: Vector2, dir: Vector2, max_dist: float) -> bool:
-	var d: Vector2 = dir.normalized()
-	var r_buf: float = Constants.PILL_RADIUS * 2.2
-	for pill in player_pills:
-		var to_pill: Vector2 = pill.position - origin
-		var proj: float = to_pill.dot(d)
-		if proj < Constants.PILL_RADIUS or proj > max_dist:
-			continue
-		var closest: Vector2 = origin + d * proj
-		if closest.distance_to(pill.position) < r_buf:
-			return true
-	return false
-
-func _ai_find_gate_shot(shooter: Vector2, gate_a: Vector2, gate_b: Vector2, target: Vector2) -> Array:
-	var to_target: Vector2 = (target - shooter).normalized()
-	if _ray_hits_segment(shooter, to_target, gate_a, gate_b):
-		return [true, to_target]
-	for step in range(1, 40):
-		for sign_v in [-1, 1]:
-			var dir: Vector2 = to_target.rotated(sign_v * step * 0.015)
-			if _ray_hits_segment(shooter, dir, gate_a, gate_b):
-				return [true, dir]
-	return [false, Vector2.ZERO]
-
-func _ai_gate_quality(shooter: Vector2, dir: Vector2, gate_a: Vector2, gate_b: Vector2) -> float:
-	var d: Vector2 = dir.normalized()
-	var ab: Vector2 = gate_b - gate_a
-	var denom: float = d.x * ab.y - d.y * ab.x
-	if absf(denom) < 0.001:
-		return 0.0
-	var oa: Vector2 = gate_a - shooter
-	var s: float = (oa.x * d.y - oa.y * d.x) / denom
-	return maxf(0.0, 1.0 - absf(s - 0.5) * 2.0)
-
-func _ai_calc_power(origin: Vector2, target: Vector2) -> float:
-	var dist: float = origin.distance_to(target)
-	var power: float = dist * Constants.PILL_LINEAR_DAMP * 1.5
-	return clampf(power, 350.0, Constants.MAX_POWER)
-
 func _ai_decide():
+	ai_decided = true
+	ai_shots.clear()
 	var diff: int = Constants.ai_difficulty
 	var f: Rect2 = Constants.FIELD_RECT
 	var cy: float = f.position.y + f.size.y / 2.0
 	var gh: float = Constants.GOAL_WIDTH / 2.0
+	var alive_ai := _alive_pills(ai_pills)
+	var alive_player := _alive_pills(player_pills)
+	var ball_pos: Vector2 = ball.position
 
-	# Difficulty tuning: more targets = smarter shot selection
-	var goal_targets: Array[Vector2] = [Vector2(f.position.x, cy)]
+	var goal_center := Vector2(f.position.x, cy)
+	var goal_targets: Array[Vector2] = [goal_center]
 	if diff >= 1:
-		goal_targets.append(Vector2(f.position.x, cy - gh * 0.5))
-		goal_targets.append(Vector2(f.position.x, cy + gh * 0.5))
-	if diff >= 2:
-		goal_targets.append(Vector2(f.position.x, cy - gh * 0.3))
-		goal_targets.append(Vector2(f.position.x, cy + gh * 0.3))
+		goal_targets.append(Vector2(f.position.x, cy - gh * 0.4))
+		goal_targets.append(Vector2(f.position.x, cy + gh * 0.4))
 
-	var best_score: float = -999.0
-	var best_idx: int = -1
-	var best_dir: Vector2 = Vector2.ZERO
-	var best_power: float = 0.0
+	var assigned_to_ball: bool = false
 
-	# --- Phase 1: goal shots ---
-	for i in range(3):
-		var shooter: Vector2 = ai_pills[i].position
-		var gate_a: Vector2 = ai_pills[(i + 1) % 3].position
-		var gate_b: Vector2 = ai_pills[(i + 2) % 3].position
+	for pill in alive_ai:
+		var best_score: float = -999.0
+		var best_dir := Vector2.ZERO
+		var best_power: float = 0.0
+		var best_action: String = ""
 
-		for target in goal_targets:
-			var shot: Array = _ai_find_gate_shot(shooter, gate_a, gate_b, target)
-			if not shot[0]:
-				continue
+		# --- Phase 1: Push ball toward player's goal ---
+		var to_ball: Vector2 = ball_pos - pill.position
+		var ball_dist: float = to_ball.length()
 
-			var dir: Vector2 = shot[1]
-			var dist: float = shooter.distance_to(target)
-			var power: float = _ai_calc_power(shooter, target)
-			var score: float = 100.0
+		if not assigned_to_ball or diff >= 2:
+			for target in goal_targets:
+				var ball_to_goal: Vector2 = (target - ball_pos).normalized()
+				var ideal_hit_pos: Vector2 = ball_pos - ball_to_goal * (Constants.PILL_RADIUS + Constants.BALL_RADIUS)
+				var to_ideal: Vector2 = ideal_hit_pos - pill.position
+				var ideal_dist: float = to_ideal.length()
+				var dir: Vector2 = to_ideal.normalized()
 
-			score += _ai_gate_quality(shooter, dir, gate_a, gate_b) * 25.0
+				var score: float = 80.0
+				var hit_alignment: float = dir.dot(ball_to_goal)
+				score += hit_alignment * 40.0
+				score -= ideal_dist / 500.0 * 20.0
 
-			if diff >= 1 and not _ai_is_path_blocked(shooter, dir, dist):
-				score += 50.0
-			elif diff >= 1:
-				score -= 30.0
+				if ball_dist < 150.0:
+					score += 25.0
 
-			score += maxf(0.0, (800.0 - dist) / 800.0) * 15.0
+				if diff >= 1:
+					var blocked: bool = false
+					for pp in alive_player:
+						if _ai_is_in_path(pill.position, dir, pp.position, ideal_dist):
+							blocked = true
+							break
+					if blocked:
+						score -= 35.0
+					for friendly in alive_ai:
+						if friendly == pill:
+							continue
+						if _ai_is_in_path(pill.position, dir, friendly.position, ideal_dist):
+							blocked = true
+							break
+					if blocked:
+						score -= 25.0
 
-			if score > best_score:
-				best_score = score
-				best_idx = i
-				best_dir = dir
-				best_power = power
-
-	# --- Phase 2: disruption (normal + hard only) ---
-	if diff >= 1 and best_score < 80.0:
-		var ai_goal_x: float = f.position.x + f.size.x
-		for i in range(3):
-			var shooter: Vector2 = ai_pills[i].position
-			var gate_a: Vector2 = ai_pills[(i + 1) % 3].position
-			var gate_b: Vector2 = ai_pills[(i + 2) % 3].position
-
-			for pp in player_pills:
-				var pp_pos: Vector2 = pp.position
-				var threat: float = 1.0 - clampf((ai_goal_x - pp_pos.x) / f.size.x, 0.0, 1.0)
-				if threat < 0.3:
-					continue
-
-				var shot: Array = _ai_find_gate_shot(shooter, gate_a, gate_b, pp_pos)
-				if not shot[0]:
-					continue
-
-				var score: float = 40.0 + threat * 40.0
-				var power: float = _ai_calc_power(shooter, pp_pos)
+				var power: float = clampf(ideal_dist * Constants.PILL_LINEAR_DAMP * 1.6, 350.0, Constants.MAX_POWER)
 
 				if score > best_score:
 					best_score = score
-					best_idx = i
-					best_dir = shot[1]
+					best_dir = dir
 					best_power = power
+					best_action = "push_ball"
 
-	# --- Phase 3: repositioning (hard only) ---
-	if diff >= 2 and best_score < 40.0:
-		var ideal_x: float = f.position.x + f.size.x * 0.35
+		# --- Phase 2: Defensive — push opponent away from our goal ---
+		if diff >= 1:
+			var our_goal := Vector2(f.position.x + f.size.x, cy)
+			for pp in alive_player:
+				var pp_dist_to_goal: float = pp.position.distance_to(our_goal)
+				if pp_dist_to_goal > f.size.x * 0.5:
+					continue
+				var to_pp: Vector2 = pp.position - pill.position
+				var pp_dist: float = to_pp.length()
+				var dir: Vector2 = to_pp.normalized()
 
-		for i in range(3):
-			var shooter: Vector2 = ai_pills[i].position
-			var gate_a: Vector2 = ai_pills[(i + 1) % 3].position
-			var gate_b: Vector2 = ai_pills[(i + 2) % 3].position
+				var threat: float = 1.0 - clampf(pp_dist_to_goal / (f.size.x * 0.5), 0.0, 1.0)
+				var score: float = 30.0 + threat * 40.0
+				score -= pp_dist / 400.0 * 10.0
 
-			var target_y: float = cy - 80.0 if shooter.y < cy else cy + 80.0
-			var target := Vector2(ideal_x, target_y)
-			var dir: Vector2 = (target - shooter).normalized()
-			var through_gate: bool = _ray_hits_segment(shooter, dir, gate_a, gate_b)
+				var power: float = clampf(pp_dist * Constants.PILL_LINEAR_DAMP * 1.5, 300.0, Constants.MAX_POWER)
 
-			var score: float = 20.0
-			if through_gate:
-				score += 15.0
+				if score > best_score:
+					best_score = score
+					best_dir = dir
+					best_power = power
+					best_action = "defend"
 
-			var dist_to_ideal: float = shooter.distance_to(target)
-			score += clampf(dist_to_ideal / 400.0, 0.0, 1.0) * 10.0
-
-			var power: float = clampf(dist_to_ideal * 0.6, 150.0, 500.0)
+		# --- Phase 3: Reposition toward ball (hard) ---
+		if diff >= 2 and best_score < 50.0:
+			var behind_ball: Vector2 = ball_pos + (ball_pos - goal_center).normalized() * 120.0
+			behind_ball.x = clampf(behind_ball.x, f.position.x + 40, f.position.x + f.size.x - 40)
+			behind_ball.y = clampf(behind_ball.y, f.position.y + 40, f.position.y + f.size.y - 40)
+			var move_dir: Vector2 = (behind_ball - pill.position).normalized()
+			var move_dist: float = pill.position.distance_to(behind_ball)
+			var score: float = 25.0 + clampf(move_dist / 300.0, 0.0, 1.0) * 15.0
+			var power: float = clampf(move_dist * 0.6, 150.0, 500.0)
 
 			if score > best_score:
 				best_score = score
-				best_idx = i
-				best_dir = dir
+				best_dir = move_dir
 				best_power = power
+				best_action = "reposition"
 
-	# --- Fallback (no gate shot found at all) ---
-	if best_idx < 0:
-		best_idx = 2
-		best_dir = Vector2(-1, 0)
-		best_power = 400.0
+		# --- Fallback ---
+		if best_dir.length() < 0.1:
+			best_dir = (ball_pos - pill.position).normalized()
+			best_power = 400.0
+			best_action = "fallback"
 
-	# --- Apply difficulty imperfections ---
-	if diff == 0:
-		# Easy: significant random angle wobble and underpowered shots
-		best_dir = best_dir.rotated(randf_range(-0.18, 0.18))
-		best_power *= randf_range(0.5, 0.75)
-	elif diff == 1:
-		# Normal: slight angle wobble and minor power variance
-		best_dir = best_dir.rotated(randf_range(-0.06, 0.06))
-		best_power *= randf_range(0.85, 1.05)
+		# --- Difficulty imperfections ---
+		if diff == 0:
+			best_dir = best_dir.rotated(randf_range(-0.22, 0.22))
+			best_power *= randf_range(0.45, 0.7)
+		elif diff == 1:
+			best_dir = best_dir.rotated(randf_range(-0.07, 0.07))
+			best_power *= randf_range(0.85, 1.05)
 
-	best_power = clampf(best_power, 150.0, Constants.MAX_POWER)
+		best_power = clampf(best_power, 200.0, Constants.MAX_POWER)
+		ai_shots.append({"pill": pill, "dir": best_dir.normalized(), "power": best_power})
 
-	ai_shot_idx = best_idx
-	ai_shot_dir = best_dir.normalized()
-	ai_shot_power = best_power
-	ai_decided = true
+		if best_action == "push_ball":
+			assigned_to_ball = true
 
-func _fire_shots():
+func _ai_is_in_path(origin: Vector2, dir: Vector2, target_pos: Vector2, max_dist: float) -> bool:
+	var to_target: Vector2 = target_pos - origin
+	var proj: float = to_target.dot(dir.normalized())
+	if proj < Constants.PILL_RADIUS or proj > max_dist:
+		return false
+	var closest: Vector2 = origin + dir.normalized() * proj
+	return closest.distance_to(target_pos) < Constants.PILL_RADIUS * 2.5
+
+# ═══════════════════════════════════════════════════════════════
+# FIRING
+# ═══════════════════════════════════════════════════════════════
+
+func _fire_all_shots():
 	phase = Phase.EXECUTING
 	settle_timer = 0.0
 
-	if aim_locked and aim_valid and sel_idx >= 0:
-		var impulse: Vector2 = aim_dir * aim_pow
-		player_pills[sel_idx].kick(impulse)
+	if not ai_decided:
+		_ai_decide()
 
-	if ai_decided and ai_shot_idx >= 0:
-		var impulse: Vector2 = ai_shot_dir * ai_shot_power
-		ai_pills[ai_shot_idx].kick(impulse)
+	for pill in shot_map:
+		var shot: Dictionary = shot_map[pill]
+		var impulse: Vector2 = shot.dir * shot.power
+		pill.kick(impulse)
+
+	for shot in ai_shots:
+		var impulse: Vector2 = shot.dir * shot.power
+		shot.pill.kick(impulse)
 
 	for p in player_pills:
 		p.is_selected = false
-	sel_idx = -1
+	selected_pill = null
+
+# ═══════════════════════════════════════════════════════════════
+# GOAL DETECTION
+# ═══════════════════════════════════════════════════════════════
 
 func _check_goals():
 	if goal_this_round:
@@ -372,26 +380,32 @@ func _check_goals():
 	var f: Rect2 = Constants.FIELD_RECT
 	var cy: float = f.position.y + f.size.y / 2.0
 	var gh: float = Constants.GOAL_WIDTH / 2.0
+	var bx: float = ball.position.x
+	var by: float = ball.position.y
 
-	for pill in player_pills + ai_pills:
-		var px: float = pill.position.x
-		var py: float = pill.position.y
-		if px > f.position.x + f.size.x + 5.0 and py > cy - gh and py < cy + gh:
-			goal_this_round = true
-			scorer = "player"
-			player_score += 1
-			return
-		if px < f.position.x - 5.0 and py > cy - gh and py < cy + gh:
-			goal_this_round = true
-			scorer = "ai"
-			ai_score += 1
-			return
+	if bx > f.position.x + f.size.x + 5.0 and by > cy - gh and by < cy + gh:
+		goal_this_round = true
+		scorer = "player"
+		player_score += 1
+	elif bx < f.position.x - 5.0 and by > cy - gh and by < cy + gh:
+		goal_this_round = true
+		scorer = "ai"
+		ai_score += 1
 
 func _all_stopped() -> bool:
+	if not ball.linear_velocity.length() < Constants.SETTLE_VELOCITY_THRESHOLD:
+		return false
 	for pill in player_pills + ai_pills:
 		if not pill.is_stopped():
 			return false
 	return true
+
+func _alive_pills(pills: Array) -> Array:
+	var result: Array = []
+	for p in pills:
+		if p.visible:
+			result.append(p)
+	return result
 
 func _end_round():
 	if goal_this_round:
@@ -411,11 +425,18 @@ func _show_game_over():
 	stadium_music.stop()
 	win_sfx.play()
 
-func _reset_pills():
+func _reset_all():
+	var f: Rect2 = Constants.FIELD_RECT
+	var cx: float = f.position.x + f.size.x / 2.0
+	var cy: float = f.position.y + f.size.y / 2.0
+	_reset_ball(Vector2(cx, cy))
 	for i in range(3):
 		player_pills[i].reset_to(Constants.PLAYER_START[i])
 	for i in range(3):
 		ai_pills[i].reset_to(Constants.AI_START[i])
+
+func _reset_ball(pos: Vector2):
+	ball.reset_to(pos)
 
 # ═══════════════════════════════════════════════════════════════
 # INPUT
@@ -431,13 +452,7 @@ func _unhandled_input(event: InputEvent):
 
 	if phase == Phase.GAME_OVER:
 		if _is_tap(event):
-			player_score = 0
-			ai_score = 0
-			round_num = 0
-			_reset_pills()
-			_start_round()
-			if not stadium_music.playing:
-				stadium_music.play()
+			_restart_game()
 		return
 
 	if phase != Phase.AIMING:
@@ -466,61 +481,71 @@ func _is_tap(ev: InputEvent) -> bool:
 	return false
 
 func _on_press(pos: Vector2):
-	for i in range(player_pills.size()):
-		if player_pills[i].position.distance_to(pos) < Constants.PILL_RADIUS * 2.5:
-			for p in player_pills:
-				p.is_selected = false
-			sel_idx = i
-			player_pills[i].is_selected = true
-			dragging = true
-			drag_start = pos
-			drag_cur = pos
-			aim_locked = false
-			return
+	var alive := _alive_pills(player_pills)
+	var closest_pill: Pill = null
+	var closest_dist: float = Constants.PILL_RADIUS * 3.0
+	for pill in alive:
+		var dist: float = pill.position.distance_to(pos)
+		if dist < closest_dist:
+			closest_dist = dist
+			closest_pill = pill
+	if closest_pill != null:
+		for p in player_pills:
+			p.is_selected = false
+		selected_pill = closest_pill
+		closest_pill.is_selected = true
+		dragging = true
+		drag_start = pos
+		drag_cur = pos
+		if closest_pill in shot_map:
+			aim_dir = shot_map[closest_pill].dir
+			aim_pow = shot_map[closest_pill].power
+		else:
+			aim_pow = 0.0
 
 func _on_drag(pos: Vector2):
-	if not dragging or sel_idx < 0:
+	if not dragging or selected_pill == null:
 		return
 	drag_cur = pos
-	var pill_pos: Vector2 = player_pills[sel_idx].position
-	var pull: Vector2 = drag_cur - pill_pos
+	var pull: Vector2 = drag_cur - selected_pill.position
 	if pull.length() < 5.0:
 		aim_pow = 0.0
 		return
 	aim_dir = -pull.normalized()
 	aim_pow = clampf(pull.length() * Constants.POWER_SCALE, 0, Constants.MAX_POWER)
-	var ga: Vector2 = player_pills[(sel_idx + 1) % 3].position
-	var gb: Vector2 = player_pills[(sel_idx + 2) % 3].position
-	aim_valid = _ray_hits_segment(pill_pos, aim_dir, ga, gb)
 
 func _on_release():
-	if dragging and sel_idx >= 0 and aim_pow > Constants.MIN_POWER and aim_valid:
-		aim_locked = true
+	if not dragging or selected_pill == null:
+		return
 	dragging = false
 
-func _ray_hits_segment(origin: Vector2, dir: Vector2, a: Vector2, b: Vector2) -> bool:
-	var d: Vector2 = dir.normalized()
-	var ab: Vector2 = b - a
-	var denom: float = d.x * ab.y - d.y * ab.x
-	if absf(denom) < 0.001:
-		return false
-	var oa: Vector2 = a - origin
-	var t: float = (oa.x * ab.y - oa.y * ab.x) / denom
-	var s: float = (oa.x * d.y - oa.y * d.x) / denom
-	return t > 0.0 and s > 0.05 and s < 0.95
+	if aim_pow > Constants.MIN_POWER:
+		shot_map[selected_pill] = {"dir": aim_dir, "power": aim_pow}
+
+func _restart_game():
+	player_score = 0
+	ai_score = 0
+	round_num = 0
+	_reset_all()
+	_start_round()
+	if not stadium_music.playing:
+		stadium_music.play()
 
 # ═══════════════════════════════════════════════════════════════
 # DRAWING
 # ═══════════════════════════════════════════════════════════════
 
 func _draw():
-	draw_rect(Rect2(0, 0, 1280, 720), Color(0.06, 0.06, 0.10))
+	var vp := get_viewport().get_visible_rect().size
+	if vp.x <= 0:
+		vp = Vector2(1280, 720)
+	draw_rect(Rect2(0, 0, vp.x, vp.y), Color(0.06, 0.06, 0.10))
 	_draw_field()
 	_draw_field_lines()
 	_draw_goal_pockets()
-	if phase == Phase.AIMING and sel_idx >= 0:
-		_draw_gate()
-		if aim_pow > Constants.MIN_POWER:
+	if phase == Phase.AIMING:
+		_draw_locked_arrows()
+		if selected_pill != null and aim_pow > Constants.MIN_POWER:
 			_draw_aim_arrow()
 
 func _draw_field():
@@ -574,16 +599,11 @@ func _draw_goal_pockets():
 	else:
 		draw_rect(right_rect, Color(0.10, 0.10, 0.15, 0.85))
 
-func _draw_gate():
-	var ga: Vector2 = player_pills[(sel_idx + 1) % 3].position
-	var gb: Vector2 = player_pills[(sel_idx + 2) % 3].position
-	draw_line(ga, gb, Constants.GATE_COLOR, 3.0)
-	draw_circle(ga, 7, Constants.GATE_COLOR)
-	draw_circle(gb, 7, Constants.GATE_COLOR)
-
 func _draw_aim_arrow():
-	var pill_pos: Vector2 = player_pills[sel_idx].position
-	var color: Color = Constants.AIM_VALID_COLOR if aim_valid else Constants.AIM_INVALID_COLOR
+	if selected_pill == null:
+		return
+	var pill_pos: Vector2 = selected_pill.position
+	var color := Constants.AIM_VALID_COLOR
 	var arrow_len: float = aim_pow / Constants.POWER_SCALE
 	var arrow_end: Vector2 = pill_pos + aim_dir * arrow_len
 
@@ -603,6 +623,31 @@ func _draw_aim_arrow():
 	var bar_col: Color = Color(0.2, 1.0, 0.2).lerp(Color(1.0, 0.2, 0.2), pct)
 	draw_rect(Rect2(bar_pos, Vector2(bar_w * pct, bar_h)), bar_col)
 
+func _draw_locked_arrows():
+	for pill in shot_map:
+		if not pill.visible:
+			continue
+		if pill == selected_pill:
+			continue
+		var shot: Dictionary = shot_map[pill]
+		var arrow_len: float = shot.power / Constants.POWER_SCALE
+		var arrow_end: Vector2 = pill.position + shot.dir * arrow_len
+		var col := Color(0.4, 0.9, 0.4, 0.5)
+		draw_line(pill.position, arrow_end, col, 2.0)
+		var hs := 8.0
+		var perp: Vector2 = shot.dir.rotated(PI / 2.0)
+		var base_pt: Vector2 = arrow_end - shot.dir * hs
+		draw_polygon(
+			[arrow_end, base_pt + perp * hs * 0.5, base_pt - perp * hs * 0.5],
+			[col, col, col])
+		var bar_w := 50.0
+		var bar_h := 5.0
+		var bar_pos: Vector2 = pill.position + Vector2(-bar_w / 2, -Constants.PILL_RADIUS - 16)
+		var pct: float = shot.power / Constants.MAX_POWER
+		draw_rect(Rect2(bar_pos, Vector2(bar_w, bar_h)), Color(0.2, 0.2, 0.2, 0.4))
+		var bar_col: Color = Color(0.2, 1.0, 0.2).lerp(Color(1.0, 0.2, 0.2), pct)
+		draw_rect(Rect2(bar_pos, Vector2(bar_w * pct, bar_h)), Color(bar_col.r, bar_col.g, bar_col.b, 0.5))
+
 # ═══════════════════════════════════════════════════════════════
 # HUD
 # ═══════════════════════════════════════════════════════════════
@@ -614,19 +659,15 @@ func _update_hud():
 		Phase.AIMING:
 			timer_bar.visible = true
 			timer_bar.value = aim_timer
-			var pct: float = aim_timer / Constants.AIM_TIME
+			var pct: float = aim_timer / Constants.FOOTBALL_AIM_TIME
 			if pct > 0.5:
 				timer_bar_style.bg_color = Color(0.2, 0.9, 0.2)
 			elif pct > 0.25:
 				timer_bar_style.bg_color = Color(0.95, 0.85, 0.1)
 			else:
 				timer_bar_style.bg_color = Color(0.95, 0.2, 0.15)
-			if aim_locked:
-				phase_label.text = "Aim locked — waiting for timer …"
-			elif sel_idx >= 0:
-				phase_label.text = "Drag away from pill to aim  ·  release to lock"
-			else:
-				phase_label.text = "Tap one of your blue pills to select"
+			var locked_count: int = shot_map.size()
+			phase_label.text = "Tap a disc to aim  ·  %d/3 aimed  ·  kick the ball into the goal!" % locked_count
 		Phase.EXECUTING, Phase.SETTLING:
 			timer_bar.visible = false
 			phase_label.text = ""
@@ -637,10 +678,33 @@ func _update_hud():
 			timer_bar.visible = false
 			phase_label.text = ""
 
-
 # ═══════════════════════════════════════════════════════════════
 # BUILD HELPERS
 # ═══════════════════════════════════════════════════════════════
+
+func _build_ball():
+	ball = _BallBody.new()
+	ball.ball_texture = ball_texture
+	ball.gravity_scale = 0.0
+	ball.can_sleep = false
+	ball.linear_damp = Constants.BALL_LINEAR_DAMP
+	ball.collision_layer = 1
+	ball.collision_mask = 1
+
+	var mat := PhysicsMaterial.new()
+	mat.bounce = Constants.BALL_BOUNCE
+	mat.friction = Constants.BALL_FRICTION
+	ball.physics_material_override = mat
+
+	var shape := CircleShape2D.new()
+	shape.radius = Constants.BALL_RADIUS
+	var col := CollisionShape2D.new()
+	col.shape = shape
+	ball.add_child(col)
+
+	var f: Rect2 = Constants.FIELD_RECT
+	ball.position = Vector2(f.position.x + f.size.x / 2.0, f.position.y + f.size.y / 2.0)
+	add_child(ball)
 
 func _build_walls():
 	var f: Rect2 = Constants.FIELD_RECT
@@ -722,9 +786,13 @@ func _build_hud():
 	hud_layer.layer = 10
 	add_child(hud_layer)
 
+	var vp := get_viewport().get_visible_rect().size
+	if vp.x <= 0:
+		vp = Vector2(1280, 720)
+
 	score_label = Label.new()
 	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	score_label.position = Vector2(440, 8)
+	score_label.position = Vector2(vp.x / 2.0 - 200, 8)
 	score_label.size = Vector2(400, 50)
 	score_label.add_theme_font_size_override("font_size", 30)
 	score_label.add_theme_color_override("font_color", Color.WHITE)
@@ -732,18 +800,18 @@ func _build_hud():
 
 	phase_label = Label.new()
 	phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	phase_label.position = Vector2(290, 38)
+	phase_label.position = Vector2(vp.x / 2.0 - 350, 38)
 	phase_label.size = Vector2(700, 25)
 	phase_label.add_theme_font_size_override("font_size", 16)
 	phase_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
 	hud_layer.add_child(phase_label)
 
 	timer_bar = ProgressBar.new()
-	timer_bar.position = Vector2(340, 685)
+	timer_bar.position = Vector2(vp.x / 2.0 - 300, vp.y - 35)
 	timer_bar.size = Vector2(600, 16)
 	timer_bar.min_value = 0.0
-	timer_bar.max_value = Constants.AIM_TIME
-	timer_bar.value = Constants.AIM_TIME
+	timer_bar.max_value = Constants.FOOTBALL_AIM_TIME
+	timer_bar.value = Constants.FOOTBALL_AIM_TIME
 	timer_bar.show_percentage = false
 
 	var bg_style := StyleBoxFlat.new()
@@ -761,14 +829,13 @@ func _build_hud():
 	timer_bar_style.corner_radius_bottom_left = 4
 	timer_bar_style.corner_radius_bottom_right = 4
 	timer_bar.add_theme_stylebox_override("fill", timer_bar_style)
-
 	hud_layer.add_child(timer_bar)
 
 	center_msg = Label.new()
 	center_msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center_msg.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	center_msg.position = Vector2(240, 250)
-	center_msg.size = Vector2(800, 220)
+	center_msg.position = Vector2(vp.x / 2.0 - 400, vp.y / 2.0 - 60)
+	center_msg.size = Vector2(800, 120)
 	center_msg.add_theme_font_size_override("font_size", 80)
 	center_msg.add_theme_color_override("font_color", Color(1, 0.9, 0.2))
 	center_msg.visible = false
@@ -776,7 +843,7 @@ func _build_hud():
 
 	restart_label = Label.new()
 	restart_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	restart_label.position = Vector2(390, 480)
+	restart_label.position = Vector2(vp.x / 2.0 - 250, vp.y / 2.0 + 70)
 	restart_label.size = Vector2(500, 30)
 	restart_label.add_theme_font_size_override("font_size", 20)
 	restart_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
@@ -786,7 +853,7 @@ func _build_hud():
 
 	quit_btn = Button.new()
 	quit_btn.text = "✕"
-	quit_btn.position = Vector2(1230, 8)
+	quit_btn.position = Vector2(vp.x - 50, 8)
 	quit_btn.size = Vector2(40, 40)
 	quit_btn.add_theme_font_size_override("font_size", 22)
 	quit_btn.pressed.connect(_on_quit_pressed)
