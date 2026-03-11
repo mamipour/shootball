@@ -43,7 +43,6 @@ var hud_layer: CanvasLayer
 var score_label: Label
 var timer_bar: ProgressBar
 var timer_bar_style: StyleBoxFlat
-var phase_label: Label
 var center_msg: Label
 var quit_btn: Button
 var quit_confirm: Panel
@@ -118,7 +117,6 @@ func _ready():
 	Online.timer_sync.connect(_on_timer_sync)
 	Online.opponent_info_received.connect(_on_opponent_info)
 
-	phase_label.text = "Waiting for opponent..."
 	Online.send_ready()
 
 func _setup_audio():
@@ -202,7 +200,6 @@ func _on_match_started(p_round: int, p_aim_time: float):
 	if round_num == 1:
 		selected_pill = my_pills[2]
 		my_pills[2].is_selected = true
-	print("[OnlineFootball] Round %d started" % round_num)
 
 func _on_multi_shots_received(p1_shots: Array, p2_shots: Array):
 	phase = Phase.EXECUTING
@@ -234,7 +231,6 @@ func _on_multi_shots_received(p1_shots: Array, p2_shots: Array):
 	for p in my_pills:
 		p.is_selected = false
 	selected_pill = null
-	print("[OnlineFootball] Multi-shots fired")
 
 func _on_goal_scored(scorer_id: String, scores: Dictionary):
 	goal_this_round = true
@@ -319,7 +315,6 @@ func _submit_all_shots():
 		var idx: int = pill.pill_index
 		shots_arr.append({"pill_idx": idx, "dir": shot.dir, "power": shot.power})
 	Online.submit_multi_shot(shots_arr)
-	phase_label.text = "Shots submitted — waiting for opponent..."
 
 func _check_goals_local():
 	if goal_this_round:
@@ -553,7 +548,6 @@ func _update_hud():
 	match phase:
 		Phase.WAITING:
 			timer_bar.visible = false
-			phase_label.text = "Waiting..."
 		Phase.AIMING:
 			timer_bar.visible = true
 			timer_bar.value = aim_timer
@@ -564,20 +558,12 @@ func _update_hud():
 				timer_bar_style.bg_color = Color(0.95, 0.85, 0.1)
 			else:
 				timer_bar_style.bg_color = Color(0.95, 0.2, 0.15)
-			if shots_submitted:
-				phase_label.text = "Shots submitted — waiting for opponent..."
-			else:
-				var locked_count: int = shot_map.size()
-				phase_label.text = "Tap a disc to aim  ·  %d/3 aimed  ·  kick the ball into the goal!" % locked_count
 		Phase.EXECUTING, Phase.SETTLING:
 			timer_bar.visible = false
-			phase_label.text = ""
 		Phase.GOAL_SCORED:
 			timer_bar.visible = false
-			phase_label.text = "Goal!"
 		Phase.GAME_OVER:
 			timer_bar.visible = false
-			phase_label.text = ""
 
 # ── Build helpers ──
 
@@ -677,9 +663,11 @@ func _build_hud():
 	if vp.x <= 0:
 		vp = Vector2(1280, 720)
 
+	var fl := Constants.FIELD_RECT.position.x
+	var fr := fl + Constants.FIELD_RECT.size.x
 	var avatar_size := 34.0
 	my_avatar_rect = TextureRect.new()
-	my_avatar_rect.position = Vector2(vp.x / 2.0 - 190, 4)
+	my_avatar_rect.position = Vector2(fl, 4)
 	my_avatar_rect.size = Vector2(avatar_size, avatar_size)
 	my_avatar_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	my_avatar_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -687,7 +675,7 @@ func _build_hud():
 
 	my_name_label = Label.new()
 	my_name_label.text = "You"
-	my_name_label.position = Vector2(vp.x / 2.0 - 150, 10)
+	my_name_label.position = Vector2(fl + 40, 10)
 	my_name_label.size = Vector2(60, 30)
 	my_name_label.add_theme_font_size_override("font_size", 18)
 	my_name_label.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
@@ -703,26 +691,18 @@ func _build_hud():
 
 	opp_name_label = Label.new()
 	opp_name_label.text = "Opponent"
-	opp_name_label.position = Vector2(vp.x / 2.0 + 60, 10)
+	opp_name_label.position = Vector2(fr - 130, 10)
 	opp_name_label.size = Vector2(90, 30)
 	opp_name_label.add_theme_font_size_override("font_size", 18)
 	opp_name_label.add_theme_color_override("font_color", Color(1.0, 0.65, 0.5))
 	hud_layer.add_child(opp_name_label)
 
 	opp_avatar_rect = TextureRect.new()
-	opp_avatar_rect.position = Vector2(vp.x / 2.0 + 155, 4)
+	opp_avatar_rect.position = Vector2(fr - avatar_size, 4)
 	opp_avatar_rect.size = Vector2(avatar_size, avatar_size)
 	opp_avatar_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	opp_avatar_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	hud_layer.add_child(opp_avatar_rect)
-
-	phase_label = Label.new()
-	phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	phase_label.position = Vector2(vp.x / 2.0 - 350, 38)
-	phase_label.size = Vector2(700, 25)
-	phase_label.add_theme_font_size_override("font_size", 16)
-	phase_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	hud_layer.add_child(phase_label)
 
 	timer_bar = ProgressBar.new()
 	timer_bar.position = Vector2(vp.x / 2.0 - 300, vp.y - 35)
@@ -761,7 +741,7 @@ func _build_hud():
 
 	quit_btn = Button.new()
 	quit_btn.text = "✕"
-	quit_btn.position = Vector2(vp.x - 50, 8)
+	quit_btn.position = Vector2(1230, 8)
 	quit_btn.size = Vector2(40, 40)
 	quit_btn.add_theme_font_size_override("font_size", 22)
 	quit_btn.pressed.connect(_on_quit_pressed)

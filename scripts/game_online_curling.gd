@@ -14,7 +14,6 @@ var hud_layer: CanvasLayer
 var score_label: Label
 var timer_bar: ProgressBar
 var timer_bar_style: StyleBoxFlat
-var phase_label: Label
 var turn_indicator: Label
 var center_msg: Label
 var quit_btn: Button
@@ -86,7 +85,6 @@ func _ready():
 	Online.timer_sync.connect(_on_timer_sync)
 	Online.opponent_info_received.connect(_on_opponent_info)
 
-	phase_label.text = "Waiting for opponent..."
 	Online.send_ready()
 
 func _setup_audio():
@@ -160,7 +158,6 @@ func _on_match_started(p_round: int, _p_aim_time: float):
 	settle_timer = 0.0
 	center_msg.visible = false
 	_clear_aim()
-	print("[OnlineCurling] End %d started" % end_num)
 
 func _on_curling_turn(whose_turn: String, p_shot_number: int, p_aim_time: float):
 	shot_number = p_shot_number
@@ -177,7 +174,6 @@ func _on_curling_turn(whose_turn: String, p_shot_number: int, p_aim_time: float)
 			selected_pill.is_selected = true
 	else:
 		phase = Phase.OPP_AIM
-	print("[OnlineCurling] Turn: %s, shot #%d" % [whose_turn, shot_number])
 
 func _on_shots_received(p1_shot: Dictionary, p2_shot: Dictionary):
 	phase = Phase.EXECUTING
@@ -562,7 +558,6 @@ func _update_hud():
 	match phase:
 		Phase.WAITING:
 			timer_bar.visible = false
-			phase_label.text = "Waiting..."
 			turn_indicator.text = ""
 		Phase.MY_AIM:
 			timer_bar.visible = true
@@ -574,26 +569,20 @@ func _update_hud():
 				timer_bar_style.bg_color = Color(0.95, 0.85, 0.1)
 			else:
 				timer_bar_style.bg_color = Color(0.95, 0.2, 0.15)
-			var remaining: int = 3 - my_used.size()
-			phase_label.text = "Your turn! Drag a disc to shoot  ·  %d disc%s left" % [remaining, "" if remaining == 1 else "s"]
 			turn_indicator.text = "▶ YOUR SHOT"
 			turn_indicator.add_theme_color_override("font_color", Color(0.3, 0.85, 1.0))
 		Phase.OPP_AIM:
 			timer_bar.visible = false
-			phase_label.text = "Opponent is aiming..."
 			turn_indicator.text = "▶ OPP SHOT"
 			turn_indicator.add_theme_color_override("font_color", Color(1.0, 0.5, 0.3))
 		Phase.EXECUTING, Phase.SETTLING:
 			timer_bar.visible = false
-			phase_label.text = ""
 			turn_indicator.text = "Shot %d / 6" % shot_number if shot_number <= 6 else ""
 		Phase.END_SCORED:
 			timer_bar.visible = false
-			phase_label.text = ""
 			turn_indicator.text = ""
 		Phase.GAME_OVER:
 			timer_bar.visible = false
-			phase_label.text = ""
 			turn_indicator.text = ""
 
 # ── Build helpers ──
@@ -659,9 +648,11 @@ func _build_hud():
 	if vp.x <= 0:
 		vp = Vector2(1280, 720)
 
+	var fl := Constants.FIELD_RECT.position.x
+	var fr := fl + Constants.FIELD_RECT.size.x
 	var avatar_size := 34.0
 	my_avatar_rect = TextureRect.new()
-	my_avatar_rect.position = Vector2(vp.x / 2.0 - 210, 4)
+	my_avatar_rect.position = Vector2(fl, 4)
 	my_avatar_rect.size = Vector2(avatar_size, avatar_size)
 	my_avatar_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	my_avatar_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -669,7 +660,7 @@ func _build_hud():
 
 	my_name_label = Label.new()
 	my_name_label.text = "You"
-	my_name_label.position = Vector2(vp.x / 2.0 - 170, 10)
+	my_name_label.position = Vector2(fl + 40, 10)
 	my_name_label.size = Vector2(60, 30)
 	my_name_label.add_theme_font_size_override("font_size", 18)
 	my_name_label.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
@@ -685,26 +676,18 @@ func _build_hud():
 
 	opp_name_label = Label.new()
 	opp_name_label.text = "Opponent"
-	opp_name_label.position = Vector2(vp.x / 2.0 + 110, 10)
+	opp_name_label.position = Vector2(fr - 130, 10)
 	opp_name_label.size = Vector2(90, 30)
 	opp_name_label.add_theme_font_size_override("font_size", 18)
 	opp_name_label.add_theme_color_override("font_color", Color(1.0, 0.65, 0.5))
 	hud_layer.add_child(opp_name_label)
 
 	opp_avatar_rect = TextureRect.new()
-	opp_avatar_rect.position = Vector2(vp.x / 2.0 + 205, 4)
+	opp_avatar_rect.position = Vector2(fr - avatar_size, 4)
 	opp_avatar_rect.size = Vector2(avatar_size, avatar_size)
 	opp_avatar_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	opp_avatar_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	hud_layer.add_child(opp_avatar_rect)
-
-	phase_label = Label.new()
-	phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	phase_label.position = Vector2(vp.x / 2.0 - 350, 38)
-	phase_label.size = Vector2(700, 25)
-	phase_label.add_theme_font_size_override("font_size", 16)
-	phase_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	hud_layer.add_child(phase_label)
 
 	turn_indicator = Label.new()
 	turn_indicator.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -749,7 +732,7 @@ func _build_hud():
 
 	quit_btn = Button.new()
 	quit_btn.text = "✕"
-	quit_btn.position = Vector2(vp.x - 50, 8)
+	quit_btn.position = Vector2(1230, 8)
 	quit_btn.size = Vector2(40, 40)
 	quit_btn.add_theme_font_size_override("font_size", 22)
 	quit_btn.pressed.connect(_on_quit_pressed)
