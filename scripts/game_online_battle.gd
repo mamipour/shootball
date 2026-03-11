@@ -18,6 +18,10 @@ var phase_label: Label
 var center_msg: Label
 var quit_btn: Button
 var quit_confirm: Panel
+var my_avatar_rect: TextureRect
+var opp_avatar_rect: TextureRect
+var my_name_label: Label
+var opp_name_label: Label
 
 # ── State ──
 var phase: Phase = Phase.WAITING
@@ -71,8 +75,8 @@ func _ready():
 	_build_arena_walls()
 	_build_pit()
 	_build_pills()
-	_assign_avatars()
 	_build_hud()
+	_assign_avatars()
 
 	Online.match_started.connect(_on_match_started)
 	Online.multi_shots_received.connect(_on_multi_shots_received)
@@ -115,6 +119,8 @@ func _assign_avatars():
 		pill.avatar_texture = my_tex
 	for pill in opp_pills:
 		pill.avatar_texture = opp_tex
+	if my_avatar_rect:
+		my_avatar_rect.texture = my_tex
 
 # ── Server signal handlers ──
 
@@ -133,6 +139,8 @@ func _on_opponent_info(_opp_name: String, opp_avatar: int):
 	var opp_tex := _load_avatar(opp_idx)
 	for pill in opp_pills:
 		pill.avatar_texture = opp_tex
+	if opp_avatar_rect:
+		opp_avatar_rect.texture = opp_tex
 
 func _rebuild_pills():
 	for p in my_pills:
@@ -543,7 +551,7 @@ func _draw_locked_arrows():
 func _update_hud():
 	var alive_my := _alive_pills(my_pills).size()
 	var alive_opp := _alive_pills(opp_pills).size()
-	status_label.text = "YOU: %d units   —   OPP: %d units" % [alive_my, alive_opp]
+	status_label.text = "%d  —  %d" % [alive_my, alive_opp]
 
 	match phase:
 		Phase.WAITING:
@@ -701,13 +709,44 @@ func _build_hud():
 	if vp.x <= 0:
 		vp = Vector2(1280, 720)
 
+	var avatar_size := 34.0
+	my_avatar_rect = TextureRect.new()
+	my_avatar_rect.position = Vector2(vp.x / 2.0 - 190, 4)
+	my_avatar_rect.size = Vector2(avatar_size, avatar_size)
+	my_avatar_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	my_avatar_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	hud_layer.add_child(my_avatar_rect)
+
+	my_name_label = Label.new()
+	my_name_label.text = "You"
+	my_name_label.position = Vector2(vp.x / 2.0 - 150, 10)
+	my_name_label.size = Vector2(60, 30)
+	my_name_label.add_theme_font_size_override("font_size", 18)
+	my_name_label.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
+	hud_layer.add_child(my_name_label)
+
 	status_label = Label.new()
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	status_label.position = Vector2(vp.x / 2.0 - 200, 8)
-	status_label.size = Vector2(400, 50)
+	status_label.position = Vector2(vp.x / 2.0 - 100, 8)
+	status_label.size = Vector2(200, 50)
 	status_label.add_theme_font_size_override("font_size", 26)
 	status_label.add_theme_color_override("font_color", Color(0.95, 0.85, 0.6))
 	hud_layer.add_child(status_label)
+
+	opp_name_label = Label.new()
+	opp_name_label.text = "Opponent"
+	opp_name_label.position = Vector2(vp.x / 2.0 + 110, 10)
+	opp_name_label.size = Vector2(90, 30)
+	opp_name_label.add_theme_font_size_override("font_size", 18)
+	opp_name_label.add_theme_color_override("font_color", Color(1.0, 0.65, 0.5))
+	hud_layer.add_child(opp_name_label)
+
+	opp_avatar_rect = TextureRect.new()
+	opp_avatar_rect.position = Vector2(vp.x / 2.0 + 205, 4)
+	opp_avatar_rect.size = Vector2(avatar_size, avatar_size)
+	opp_avatar_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	opp_avatar_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	hud_layer.add_child(opp_avatar_rect)
 
 	phase_label = Label.new()
 	phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
