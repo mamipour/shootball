@@ -13,6 +13,8 @@ signal opponent_left
 signal timer_sync(remaining: float)
 signal opponent_info_received(opp_name: String, opp_avatar: int)
 signal elimination_received(eliminations: Array)
+signal curling_turn_started(whose_turn: String, shot_number: int, aim_time: float)
+signal curling_end_scored(winner: String, points: int, scores: Dictionary)
 signal connection_error(msg: String)
 
 const SERVER_HOST := "shootball.avardgah.com"
@@ -47,6 +49,8 @@ const OP_ROUND_RESULT := 10
 const OP_MULTI_SHOT_SUBMIT := 11
 const OP_MULTI_SHOTS_EXECUTE := 12
 const OP_ELIMINATION := 13
+const OP_CURLING_TURN := 14
+const OP_CURLING_END_SCORED := 15
 
 func _ready():
 	client = Nakama.create_client(SERVER_KEY, SERVER_HOST, SERVER_PORT, "http")
@@ -193,6 +197,26 @@ func report_round_result(scorer_id: String) -> void:
 	})
 	socket.send_match_state_async(match_id, OP_ROUND_RESULT, data)
 
+func report_curling_end_result(winner_id: String, points: int) -> void:
+	if not socket or match_id == "":
+		return
+	var data := JSON.stringify({
+		"type": "round_result",
+		"curling_end": true,
+		"winner": winner_id,
+		"points": points,
+	})
+	socket.send_match_state_async(match_id, OP_ROUND_RESULT, data)
+
+func report_curling_shot_settled() -> void:
+	if not socket or match_id == "":
+		return
+	var data := JSON.stringify({
+		"type": "round_result",
+		"curling_shot_settled": true,
+	})
+	socket.send_match_state_async(match_id, OP_ROUND_RESULT, data)
+
 func report_elimination_result(eliminations: Array) -> void:
 	if not socket or match_id == "":
 		return
@@ -282,6 +306,18 @@ func _on_match_state(p_state: NakamaRTAPI.MatchData):
 		OP_ELIMINATION:
 			var elims: Array = data.get("eliminations", [])
 			elimination_received.emit(elims)
+		OP_CURLING_TURN:
+			curling_turn_started.emit(
+				data.get("whose_turn", ""),
+				int(data.get("shot_number", 1)),
+				float(data.get("aim_time", 10.0)),
+			)
+		OP_CURLING_END_SCORED:
+			curling_end_scored.emit(
+				data.get("winner", ""),
+				int(data.get("points", 0)),
+				data.get("scores", {}),
+			)
 
 func _on_socket_closed():
 	print("[Online] Socket closed")

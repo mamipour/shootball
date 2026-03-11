@@ -12,9 +12,11 @@ const MODE_SCENES := {
 	"coinball": "res://scenes/game_online.tscn",
 	"football": "res://scenes/game_online_football.tscn",
 	"battle": "res://scenes/game_online_battle.tscn",
+	"volleyball": "res://scenes/game_online_volleyball.tscn",
+	"curling": "res://scenes/game_online_curling.tscn",
 }
-const MODE_LABELS := ["CoinBall", "Football", "Battle Arena"]
-const MODE_KEYS := ["coinball", "football", "battle"]
+const MODE_LABELS := ["CoinBall", "Football", "Battle Arena", "Volleyball", "Curling"]
+const MODE_KEYS := ["coinball", "football", "battle", "volleyball", "curling"]
 
 func _ready():
 	var bg := ColorRect.new()
