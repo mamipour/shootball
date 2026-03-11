@@ -124,13 +124,23 @@ func _load_avatar(idx: int) -> Texture2D:
 
 # ── Server signal handlers ──
 
-func _on_opponent_info(_opp_name: String, _opp_avatar: int):
-	# Server may assign our side via OP_OPPONENT_INFO; update if changed
+func _on_opponent_info(_opp_name: String, opp_avatar: int):
+	# Update side assignment
 	if Online.my_side != "":
 		var new_p1: bool = (Online.my_side == "player1")
 		if new_p1 != i_am_player1:
 			i_am_player1 = new_p1
 			_rebuild_pills()
+
+	# Set opponent avatar — pick a random different one if same as ours
+	var opp_idx: int = opp_avatar
+	if opp_idx == Constants.player_avatar_idx:
+		opp_idx = randi() % Constants.AVATAR_COUNT
+		while opp_idx == Constants.player_avatar_idx:
+			opp_idx = randi() % Constants.AVATAR_COUNT
+	var opp_tex := _load_avatar(opp_idx)
+	for pill in opp_pills:
+		pill.avatar_texture = opp_tex
 
 func _rebuild_pills():
 	for p in my_pills:

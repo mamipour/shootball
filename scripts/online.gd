@@ -156,7 +156,8 @@ func submit_shot(pill_idx: int, dir: Vector2, power: float) -> void:
 func send_ready() -> void:
 	if not socket or match_id == "":
 		return
-	socket.send_match_state_async(match_id, OP_PLAYER_READY, "{}")
+	var data := JSON.stringify({"avatar_idx": Constants.player_avatar_idx})
+	socket.send_match_state_async(match_id, OP_PLAYER_READY, data)
 
 func report_round_result(scorer_id: String) -> void:
 	if not socket or match_id == "":
