@@ -156,7 +156,6 @@ func _on_match_started(p_round: int, p_aim_time: float):
 	round_num = p_round
 	aim_timer = p_aim_time
 	phase = Phase.AIMING
-	sel_idx = 2
 	dragging = false
 	shot_submitted = false
 	aim_valid = false
@@ -169,7 +168,11 @@ func _on_match_started(p_round: int, p_aim_time: float):
 	pending_my_shot = {}
 	for p in my_pills:
 		p.is_selected = false
-	my_pills[2].is_selected = true
+	if round_num == 1:
+		sel_idx = 2
+		my_pills[2].is_selected = true
+	else:
+		sel_idx = -1
 	print("[Online] Round %d started" % round_num)
 
 func _on_shots_received(p1_data: Dictionary, p2_data: Dictionary):
