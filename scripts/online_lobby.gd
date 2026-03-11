@@ -76,10 +76,8 @@ func _ready():
 	back_btn.pressed.connect(_on_back)
 	vbox.add_child(back_btn)
 
-	# Connect signals
 	Online.matchmaker_found.connect(_on_matchmaker_found)
 	Online.connection_error.connect(_on_error)
-	Online.match_started.connect(_on_match_started)
 
 	# Auto-login if not already
 	_ensure_connected()
@@ -110,9 +108,7 @@ func _on_cancel():
 	await Online.cancel_matchmaking()
 
 func _on_matchmaker_found(p_match_id: String, opp_name: String, side: String):
-	status_label.text = "Match found! vs %s" % opp_name
-
-func _on_match_started(_round_num: int, _aim_time: float):
+	status_label.text = "Match found! Loading..."
 	get_tree().change_scene_to_file("res://scenes/game_online.tscn")
 
 func _on_error(msg: String):

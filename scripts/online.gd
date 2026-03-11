@@ -127,19 +127,17 @@ func _on_matchmaker_matched(p_matched: NakamaRTAPI.MatchmakerMatched):
 		connection_error.emit("Failed to join match")
 		return
 	match_id = joined.match_id
-	# Determine my side based on presence order
-	var presences = joined.presences
-	if presences.size() >= 2:
-		if presences[0].user_id == user_id:
-			my_side = "player1"
-			opponent_user_id = presences[1].user_id
-		else:
-			my_side = "player2"
-			opponent_user_id = presences[0].user_id
-	else:
-		my_side = "player1"
 
-	print("[Online] Joined match %s as %s" % [match_id, my_side])
+	# Determine opponent from presences (side will be assigned by server via OP_OPPONENT_INFO)
+	my_side = ""
+	var presences = joined.presences
+	for pres in presences:
+		if pres.user_id != user_id:
+			opponent_user_id = pres.user_id
+			break
+
+	print("[Online] Joined match %s" % match_id)
+	matchmaker_found.emit(match_id, "", "")
 
 # ── Match Communication ──
 
@@ -230,6 +228,10 @@ func _on_match_state(p_state: NakamaRTAPI.MatchData):
 				data.get("scores", {}),
 			)
 		OP_OPPONENT_INFO:
+			var assigned_side: String = data.get("your_side", "")
+			if assigned_side != "":
+				my_side = assigned_side
+				print("[Online] Assigned side: %s" % my_side)
 			opponent_info_received.emit(
 				data.get("name", "Opponent"),
 				data.get("avatar_idx", 0),

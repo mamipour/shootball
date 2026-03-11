@@ -63,7 +63,12 @@ var goal_this_round: bool = false
 
 func _ready():
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	i_am_player1 = (Online.my_side == "player1")
+
+	# Side may not be assigned yet if OP_OPPONENT_INFO arrives after scene loads
+	if Online.my_side != "":
+		i_am_player1 = (Online.my_side == "player1")
+	else:
+		i_am_player1 = true
 
 	grass_texture = load("res://assets/groundGrass_mownWide_vector.svg")
 	goal_left_tex = load("res://assets/goal_left.svg")
@@ -75,15 +80,16 @@ func _ready():
 	_assign_avatars()
 	_build_hud()
 
-	# Connect server signals
 	Online.match_started.connect(_on_match_started)
 	Online.shots_received.connect(_on_shots_received)
 	Online.goal_scored.connect(_on_goal_scored)
 	Online.game_over.connect(_on_game_over)
 	Online.opponent_left.connect(_on_opponent_left)
 	Online.timer_sync.connect(_on_timer_sync)
+	Online.opponent_info_received.connect(_on_opponent_info)
 
-	phase_label.text = "Waiting for match to start..."
+	phase_label.text = "Waiting for opponent..."
+	Online.send_ready()
 
 func _setup_audio():
 	stadium_music = AudioStreamPlayer.new()
@@ -117,6 +123,24 @@ func _load_avatar(idx: int) -> Texture2D:
 	return load(Constants.AVATAR_DIR + "avatar_%02d.png" % idx)
 
 # ── Server signal handlers ──
+
+func _on_opponent_info(_opp_name: String, _opp_avatar: int):
+	# Server may assign our side via OP_OPPONENT_INFO; update if changed
+	if Online.my_side != "":
+		var new_p1: bool = (Online.my_side == "player1")
+		if new_p1 != i_am_player1:
+			i_am_player1 = new_p1
+			_rebuild_pills()
+
+func _rebuild_pills():
+	for p in my_pills:
+		p.queue_free()
+	for p in opp_pills:
+		p.queue_free()
+	my_pills.clear()
+	opp_pills.clear()
+	_build_pills()
+	_assign_avatars()
 
 func _on_match_started(p_round: int, p_aim_time: float):
 	round_num = p_round
