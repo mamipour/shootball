@@ -6,11 +6,13 @@ signal authenticated
 signal matchmaker_found(match_id: String, opponent_name: String, my_side: String)
 signal match_started(round_num: int, aim_time: float)
 signal shots_received(player1_shot: Dictionary, player2_shot: Dictionary)
+signal multi_shots_received(player1_shots: Array, player2_shots: Array)
 signal goal_scored(scorer_id: String, scores: Dictionary)
 signal game_over(winner_id: String, reason: String, scores: Dictionary)
 signal opponent_left
 signal timer_sync(remaining: float)
 signal opponent_info_received(opp_name: String, opp_avatar: int)
+signal elimination_received(eliminations: Array)
 signal connection_error(msg: String)
 
 const SERVER_HOST := "shootball.avardgah.com"
@@ -27,6 +29,7 @@ var display_name: String = ""
 var match_id: String = ""
 var my_side: String = ""   # "player1" or "player2"
 var opponent_user_id: String = ""
+var selected_mode: String = "coinball"
 
 var _matchmaker_ticket: String = ""
 
@@ -41,6 +44,9 @@ const OP_OPPONENT_INFO := 7
 const OP_PLAYER_LEFT := 8
 const OP_TIMER_SYNC := 9
 const OP_ROUND_RESULT := 10
+const OP_MULTI_SHOT_SUBMIT := 11
+const OP_MULTI_SHOTS_EXECUTE := 12
+const OP_ELIMINATION := 13
 
 func _ready():
 	client = Nakama.create_client(SERVER_KEY, SERVER_HOST, SERVER_PORT, "http")
@@ -107,13 +113,15 @@ func find_match() -> void:
 		var ok := await connect_socket()
 		if not ok:
 			return
-	var result = await socket.add_matchmaker_async("*", 2, 2)
+	var query := "+properties.mode:" + selected_mode
+	var str_props := {"mode": selected_mode}
+	var result = await socket.add_matchmaker_async(query, 2, 2, str_props)
 	if result.is_exception():
 		push_error("Matchmaker failed: %s" % result)
 		connection_error.emit("Matchmaking failed")
 		return
 	_matchmaker_ticket = result.ticket
-	print("[Online] Matchmaker ticket: %s" % _matchmaker_ticket)
+	print("[Online] Matchmaker ticket: %s (mode=%s)" % [_matchmaker_ticket, selected_mode])
 
 func cancel_matchmaking() -> void:
 	if _matchmaker_ticket != "" and socket:
@@ -153,10 +161,27 @@ func submit_shot(pill_idx: int, dir: Vector2, power: float) -> void:
 	})
 	socket.send_match_state_async(match_id, OP_SHOT_SUBMIT, data)
 
+func submit_multi_shot(shots: Array) -> void:
+	if not socket or match_id == "":
+		return
+	var arr := []
+	for s in shots:
+		arr.append({
+			"pill_idx": s.pill_idx,
+			"dir_x": s.dir.x,
+			"dir_y": s.dir.y,
+			"power": s.power,
+		})
+	var data := JSON.stringify({"shots": arr})
+	socket.send_match_state_async(match_id, OP_MULTI_SHOT_SUBMIT, data)
+
 func send_ready() -> void:
 	if not socket or match_id == "":
 		return
-	var data := JSON.stringify({"avatar_idx": Constants.player_avatar_idx})
+	var data := JSON.stringify({
+		"avatar_idx": Constants.player_avatar_idx,
+		"game_mode": selected_mode,
+	})
 	socket.send_match_state_async(match_id, OP_PLAYER_READY, data)
 
 func report_round_result(scorer_id: String) -> void:
@@ -165,6 +190,15 @@ func report_round_result(scorer_id: String) -> void:
 	var data := JSON.stringify({
 		"type": "round_result",
 		"scorer": scorer_id,
+	})
+	socket.send_match_state_async(match_id, OP_ROUND_RESULT, data)
+
+func report_elimination_result(eliminations: Array) -> void:
+	if not socket or match_id == "":
+		return
+	var data := JSON.stringify({
+		"type": "round_result",
+		"eliminations": eliminations,
 	})
 	socket.send_match_state_async(match_id, OP_ROUND_RESULT, data)
 
@@ -217,6 +251,10 @@ func _on_match_state(p_state: NakamaRTAPI.MatchData):
 			var p1 := data.get("player1", {}) as Dictionary
 			var p2 := data.get("player2", {}) as Dictionary
 			shots_received.emit(p1, p2)
+		OP_MULTI_SHOTS_EXECUTE:
+			var p1s: Array = data.get("player1_shots", [])
+			var p2s: Array = data.get("player2_shots", [])
+			multi_shots_received.emit(p1s, p2s)
 		OP_GOAL_SCORED:
 			goal_scored.emit(
 				data.get("scorer", ""),
@@ -241,6 +279,9 @@ func _on_match_state(p_state: NakamaRTAPI.MatchData):
 			opponent_left.emit()
 		OP_TIMER_SYNC:
 			timer_sync.emit(data.get("remaining", 0.0))
+		OP_ELIMINATION:
+			var elims: Array = data.get("eliminations", [])
+			elimination_received.emit(elims)
 
 func _on_socket_closed():
 	print("[Online] Socket closed")

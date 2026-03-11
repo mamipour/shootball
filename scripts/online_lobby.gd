@@ -5,7 +5,16 @@ var find_btn: Button
 var cancel_btn: Button
 var back_btn: Button
 var friends_btn: Button
+var mode_option: OptionButton
 var searching := false
+
+const MODE_SCENES := {
+	"coinball": "res://scenes/game_online.tscn",
+	"football": "res://scenes/game_online_football.tscn",
+	"battle": "res://scenes/game_online_battle.tscn",
+}
+const MODE_LABELS := ["CoinBall", "Football", "Battle Arena"]
+const MODE_KEYS := ["coinball", "football", "battle"]
 
 func _ready():
 	var bg := ColorRect.new()
@@ -29,8 +38,35 @@ func _ready():
 	vbox.add_child(title)
 
 	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(0, 20)
+	spacer.custom_minimum_size = Vector2(0, 10)
 	vbox.add_child(spacer)
+
+	# Mode selector
+	var mode_row := HBoxContainer.new()
+	mode_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	mode_row.add_theme_constant_override("separation", 10)
+	vbox.add_child(mode_row)
+
+	var mode_lbl := Label.new()
+	mode_lbl.text = "Game Mode:"
+	mode_lbl.add_theme_font_size_override("font_size", 20)
+	mode_lbl.add_theme_color_override("font_color", Color(0.8, 0.8, 0.9))
+	mode_row.add_child(mode_lbl)
+
+	mode_option = OptionButton.new()
+	for i in range(MODE_LABELS.size()):
+		mode_option.add_item(MODE_LABELS[i], i)
+	mode_option.add_theme_font_size_override("font_size", 20)
+	mode_option.custom_minimum_size = Vector2(180, 40)
+	var saved_idx := MODE_KEYS.find(Online.selected_mode)
+	if saved_idx >= 0:
+		mode_option.selected = saved_idx
+	mode_option.item_selected.connect(_on_mode_selected)
+	mode_row.add_child(mode_option)
+
+	var spacer1b := Control.new()
+	spacer1b.custom_minimum_size = Vector2(0, 4)
+	vbox.add_child(spacer1b)
 
 	status_label = Label.new()
 	status_label.text = "Ready to play"
@@ -79,8 +115,10 @@ func _ready():
 	Online.matchmaker_found.connect(_on_matchmaker_found)
 	Online.connection_error.connect(_on_error)
 
-	# Auto-login if not already
 	_ensure_connected()
+
+func _on_mode_selected(idx: int):
+	Online.selected_mode = MODE_KEYS[idx]
 
 func _ensure_connected():
 	if Online.user_id == "":
@@ -97,25 +135,29 @@ func _on_find_match():
 	searching = true
 	find_btn.visible = false
 	cancel_btn.visible = true
-	status_label.text = "Searching for opponent..."
+	mode_option.disabled = true
+	status_label.text = "Searching for %s opponent..." % MODE_LABELS[mode_option.selected]
 	await Online.find_match()
 
 func _on_cancel():
 	searching = false
 	find_btn.visible = true
 	cancel_btn.visible = false
+	mode_option.disabled = false
 	status_label.text = "Ready to play"
 	await Online.cancel_matchmaking()
 
-func _on_matchmaker_found(p_match_id: String, opp_name: String, side: String):
+func _on_matchmaker_found(_p_match_id: String, _opp_name: String, _side: String):
 	status_label.text = "Match found! Loading..."
-	get_tree().change_scene_to_file("res://scenes/game_online.tscn")
+	var scene_path: String = MODE_SCENES.get(Online.selected_mode, "res://scenes/game_online.tscn")
+	get_tree().change_scene_to_file(scene_path)
 
 func _on_error(msg: String):
 	status_label.text = "Error: %s" % msg
 	searching = false
 	find_btn.visible = true
 	cancel_btn.visible = false
+	mode_option.disabled = false
 
 func _on_back():
 	if searching:
