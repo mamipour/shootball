@@ -156,11 +156,12 @@ func _on_match_started(p_round: int, p_aim_time: float):
 	round_num = p_round
 	aim_timer = p_aim_time
 	phase = Phase.AIMING
-	sel_idx = -1
+	sel_idx = 0
 	dragging = false
 	shot_submitted = false
 	aim_valid = false
 	aim_pow = 0.0
+	aim_dir = Vector2.ZERO
 	goal_this_round = false
 	settle_timer = 0.0
 	center_msg.visible = false
@@ -168,6 +169,7 @@ func _on_match_started(p_round: int, p_aim_time: float):
 	pending_my_shot = {}
 	for p in my_pills:
 		p.is_selected = false
+	my_pills[0].is_selected = true
 	print("[Online] Round %d started" % round_num)
 
 func _on_shots_received(p1_data: Dictionary, p2_data: Dictionary):
@@ -249,8 +251,9 @@ func _process(delta: float):
 	match phase:
 		Phase.AIMING:
 			aim_timer -= delta
-			if aim_timer <= 0.0:
+			if aim_timer <= 0.0 and not shot_submitted:
 				aim_timer = 0.0
+				_submit_current_aim()
 		Phase.EXECUTING:
 			settle_timer += delta
 			_check_goals_local()
@@ -386,11 +389,17 @@ func _on_drag(pos: Vector2):
 	aim_valid = _ray_hits_segment(pill_pos, aim_dir, ga, gb)
 
 func _on_release():
-	if dragging and sel_idx >= 0 and aim_pow > Constants.MIN_POWER and aim_valid:
-		shot_submitted = true
-		Online.submit_shot(sel_idx, aim_dir, aim_pow)
-		phase_label.text = "Shot locked — waiting for opponent..."
 	dragging = false
+
+func _submit_current_aim():
+	if shot_submitted:
+		return
+	shot_submitted = true
+	if sel_idx >= 0 and aim_pow > Constants.MIN_POWER and aim_valid:
+		Online.submit_shot(sel_idx, aim_dir, aim_pow)
+		phase_label.text = "Shot submitted — waiting for opponent..."
+	else:
+		phase_label.text = "No shot — waiting for opponent..."
 
 func _ray_hits_segment(origin: Vector2, dir: Vector2, a: Vector2, b: Vector2) -> bool:
 	var d: Vector2 = dir.normalized()
@@ -506,9 +515,11 @@ func _update_hud():
 			else:
 				timer_bar_style.bg_color = Color(0.95, 0.2, 0.15)
 			if shot_submitted:
-				phase_label.text = "Shot locked — waiting for opponent..."
+				pass
+			elif aim_pow > Constants.MIN_POWER and aim_valid:
+				phase_label.text = "Aimed!  Adjust or wait for timer  ·  tap another pill to switch"
 			elif sel_idx >= 0:
-				phase_label.text = "Drag away from pill to aim  ·  release to lock"
+				phase_label.text = "Drag away from pill to aim  ·  shot fires when timer ends"
 			else:
 				phase_label.text = "Tap one of your pills to select"
 		Phase.EXECUTING, Phase.SETTLING:
