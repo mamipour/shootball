@@ -156,7 +156,7 @@ func _on_match_started(p_round: int, p_aim_time: float):
 	round_num = p_round
 	aim_timer = p_aim_time
 	phase = Phase.AIMING
-	sel_idx = 0
+	sel_idx = 2
 	dragging = false
 	shot_submitted = false
 	aim_valid = false
@@ -169,7 +169,7 @@ func _on_match_started(p_round: int, p_aim_time: float):
 	pending_my_shot = {}
 	for p in my_pills:
 		p.is_selected = false
-	my_pills[0].is_selected = true
+	my_pills[2].is_selected = true
 	print("[Online] Round %d started" % round_num)
 
 func _on_shots_received(p1_data: Dictionary, p2_data: Dictionary):
@@ -390,6 +390,8 @@ func _on_drag(pos: Vector2):
 
 func _on_release():
 	dragging = false
+	if sel_idx >= 0 and aim_pow > Constants.MIN_POWER and aim_valid:
+		Online.submit_shot(sel_idx, aim_dir, aim_pow)
 
 func _submit_current_aim():
 	if shot_submitted:
@@ -397,9 +399,6 @@ func _submit_current_aim():
 	shot_submitted = true
 	if sel_idx >= 0 and aim_pow > Constants.MIN_POWER and aim_valid:
 		Online.submit_shot(sel_idx, aim_dir, aim_pow)
-		phase_label.text = "Shot submitted — waiting for opponent..."
-	else:
-		phase_label.text = "No shot — waiting for opponent..."
 
 func _ray_hits_segment(origin: Vector2, dir: Vector2, a: Vector2, b: Vector2) -> bool:
 	var d: Vector2 = dir.normalized()
