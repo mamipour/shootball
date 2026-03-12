@@ -725,6 +725,10 @@ func _build_hud():
 	hud_layer.layer = 10
 	add_child(hud_layer)
 
+	var vp := get_viewport().get_visible_rect().size
+	if vp.x <= 0:
+		vp = Vector2(1280, 720)
+
 	score_label = Label.new()
 	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	score_label.position = Vector2(440, 8 + Constants.safe_top)
