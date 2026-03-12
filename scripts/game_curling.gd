@@ -11,7 +11,6 @@ var hud_layer: CanvasLayer
 var score_label: Label
 var timer_bar: ProgressBar
 var timer_bar_style: StyleBoxFlat
-var phase_label: Label
 var turn_indicator: Label
 var center_msg: Label
 var restart_label: Label
@@ -714,30 +713,26 @@ func _update_hud():
 				timer_bar_style.bg_color = Color(0.95, 0.85, 0.1)
 			else:
 				timer_bar_style.bg_color = Color(0.95, 0.2, 0.15)
-			var remaining: int = 3 - player_used.size()
-			phase_label.text = "Your turn!  Drag a disc to shoot  ·  %d disc%s left" % [remaining, "" if remaining == 1 else "s"]
+			pass
 			turn_indicator.text = "▶ YOUR SHOT"
 			turn_indicator.add_theme_color_override("font_color", Color(0.3, 0.85, 1.0))
 
 		Phase.AI_THINKING:
 			timer_bar.visible = false
-			phase_label.text = "AI is thinking..."
+			pass
 			turn_indicator.text = "▶ AI SHOT"
 			turn_indicator.add_theme_color_override("font_color", Color(1.0, 0.5, 0.3))
 
 		Phase.EXECUTING, Phase.SETTLING:
 			timer_bar.visible = false
-			phase_label.text = ""
 			turn_indicator.text = "Shot %d / 6" % shots_done if shots_done < 6 else ""
 
 		Phase.END_SCORED:
 			timer_bar.visible = false
-			phase_label.text = end_msg
 			turn_indicator.text = ""
 
 		Phase.GAME_OVER:
 			timer_bar.visible = false
-			phase_label.text = ""
 			turn_indicator.text = ""
 
 # ═══════════════════════════════════════════════════════════════
@@ -810,14 +805,6 @@ func _build_hud():
 	score_label.add_theme_font_size_override("font_size", 28)
 	score_label.add_theme_color_override("font_color", Color.WHITE)
 	hud_layer.add_child(score_label)
-
-	phase_label = Label.new()
-	phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	phase_label.position = Vector2(vp.x / 2.0 - 350, 38)
-	phase_label.size = Vector2(700, 25)
-	phase_label.add_theme_font_size_override("font_size", 16)
-	phase_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	hud_layer.add_child(phase_label)
 
 	turn_indicator = Label.new()
 	turn_indicator.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

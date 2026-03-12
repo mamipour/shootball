@@ -11,7 +11,6 @@ var hud_layer: CanvasLayer
 var score_label: Label
 var timer_bar: ProgressBar
 var timer_bar_style: StyleBoxFlat
-var phase_label: Label
 var center_msg: Label
 var restart_label: Label
 var quit_btn: Button
@@ -624,21 +623,13 @@ func _update_hud():
 				timer_bar_style.bg_color = Color(0.95, 0.85, 0.1)
 			else:
 				timer_bar_style.bg_color = Color(0.95, 0.2, 0.15)
-			if aim_locked:
-				phase_label.text = "Aim locked — waiting for timer …"
-			elif sel_idx >= 0:
-				phase_label.text = "Drag away from pill to aim  ·  release to lock"
-			else:
-				phase_label.text = "Tap one of your blue pills to select"
+			pass
 		Phase.EXECUTING, Phase.SETTLING:
 			timer_bar.visible = false
-			phase_label.text = ""
 		Phase.GOAL_SCORED:
 			timer_bar.visible = false
-			phase_label.text = "%s scored!" % ("You" if scorer == "player" else "AI")
 		Phase.GAME_OVER:
 			timer_bar.visible = false
-			phase_label.text = ""
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -736,14 +727,6 @@ func _build_hud():
 	score_label.add_theme_font_size_override("font_size", 30)
 	score_label.add_theme_color_override("font_color", Color.WHITE)
 	hud_layer.add_child(score_label)
-
-	phase_label = Label.new()
-	phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	phase_label.position = Vector2(290, 38)
-	phase_label.size = Vector2(700, 25)
-	phase_label.add_theme_font_size_override("font_size", 16)
-	phase_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	hud_layer.add_child(phase_label)
 
 	timer_bar = ProgressBar.new()
 	timer_bar.position = Vector2(340, 685)
