@@ -115,16 +115,6 @@ func _build_main_menu(root: VBoxContainer):
 	vol_row.add_child(vol_label)
 	_update_vol_label()
 
-	var spacer2 := Control.new()
-	spacer2.custom_minimum_size = Vector2(0, 6)
-	main_vbox.add_child(spacer2)
-
-	var quit_btn := Button.new()
-	quit_btn.text = "  Quit  "
-	quit_btn.add_theme_font_size_override("font_size", 20)
-	quit_btn.custom_minimum_size = Vector2(260, 44)
-	quit_btn.pressed.connect(_on_quit)
-	main_vbox.add_child(quit_btn)
 
 func _build_solo_menu(root: VBoxContainer):
 	solo_vbox = VBoxContainer.new()
@@ -265,6 +255,3 @@ func _on_volume_changed(value: float):
 
 func _update_vol_label():
 	vol_label.text = "%d%%" % int(Constants.master_volume * 100)
-
-func _on_quit():
-	get_tree().quit()
