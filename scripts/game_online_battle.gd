@@ -150,7 +150,9 @@ func _rebuild_pills():
 	_build_pills()
 	_assign_avatars()
 
-func _on_match_started(p_round: int, p_aim_time: float):
+func _on_match_started(p_round: int, p_aim_time: float, positions: Dictionary = {}):
+	if positions is Dictionary and positions.size() > 0:
+		_apply_synced_positions(positions)
 	round_num = p_round
 	aim_timer = p_aim_time
 	phase = Phase.AIMING
@@ -278,6 +280,9 @@ func _submit_all_shots():
 	Online.submit_multi_shot(shots_arr)
 
 func _report_round_result():
+	if not i_am_player1:
+		phase = Phase.WAITING
+		return
 	var eliminations: Array = []
 	var my_id := Online.user_id
 	var opp_id := Online.opponent_user_id
@@ -300,7 +305,7 @@ func _report_round_result():
 			var uid: String = opp_id if i_am_player1 else my_id
 			eliminations.append({"user_id": uid, "pill_idx": i})
 
-	Online.report_elimination_result(eliminations)
+	Online.report_elimination_result(eliminations, _collect_positions())
 
 	if eliminations.size() > 0:
 		elim_sfx.play()
@@ -312,6 +317,41 @@ func _report_round_result():
 		center_msg.visible = true
 	else:
 		phase = Phase.WAITING
+
+func _collect_positions() -> Dictionary:
+	var origin := Constants.FIELD_RECT.position
+	var p1 := []
+	var p2 := []
+	for p in my_pills:
+		var rel := p.position - origin
+		p1.append([rel.x, rel.y, p.visible])
+	for p in opp_pills:
+		var rel := p.position - origin
+		p2.append([rel.x, rel.y, p.visible])
+	return {"p1": p1, "p2": p2}
+
+func _apply_synced_positions(positions: Dictionary) -> void:
+	var origin := Constants.FIELD_RECT.position
+	var p1_data: Array = positions.get("p1", [])
+	var p2_data: Array = positions.get("p2", [])
+	var my_data: Array = p1_data if i_am_player1 else p2_data
+	var opp_data: Array = p2_data if i_am_player1 else p1_data
+	for i in range(mini(my_data.size(), my_pills.size())):
+		var d: Array = my_data[i]
+		var target := origin + Vector2(float(d[0]), float(d[1]))
+		my_pills[i].position = target
+		my_pills[i].linear_velocity = Vector2.ZERO
+		if d.size() > 2:
+			my_pills[i].visible = bool(d[2])
+			my_pills[i].freeze = not bool(d[2])
+	for i in range(mini(opp_data.size(), opp_pills.size())):
+		var d: Array = opp_data[i]
+		var target := origin + Vector2(float(d[0]), float(d[1]))
+		opp_pills[i].position = target
+		opp_pills[i].linear_velocity = Vector2.ZERO
+		if d.size() > 2:
+			opp_pills[i].visible = bool(d[2])
+			opp_pills[i].freeze = not bool(d[2])
 
 # ── Pit mechanics ──
 

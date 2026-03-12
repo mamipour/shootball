@@ -182,7 +182,9 @@ func _rebuild_pills():
 	_build_pills()
 	_assign_avatars()
 
-func _on_match_started(p_round: int, p_aim_time: float):
+func _on_match_started(p_round: int, p_aim_time: float, positions: Dictionary = {}):
+	if positions is Dictionary and positions.size() > 0:
+		_apply_synced_positions(positions)
 	round_num = p_round
 	aim_timer = p_aim_time
 	phase = Phase.AIMING
@@ -331,6 +333,9 @@ func _check_goals_local():
 		goal_this_round = true
 
 func _report_round_result():
+	if not i_am_player1:
+		phase = Phase.WAITING
+		return
 	var f: Rect2 = Constants.FIELD_RECT
 	var cy: float = f.position.y + f.size.y / 2.0
 	var gh: float = Constants.GOAL_WIDTH / 2.0
@@ -343,8 +348,40 @@ func _report_round_result():
 	elif bx < f.position.x - 5.0 and by > cy - gh and by < cy + gh:
 		scorer_id = Online.opponent_user_id if i_am_player1 else Online.user_id
 
-	Online.report_round_result(scorer_id)
+	Online.report_round_result(scorer_id, _collect_positions())
 	phase = Phase.WAITING
+
+func _collect_positions() -> Dictionary:
+	var origin := Constants.FIELD_RECT.position
+	var p1 := []
+	var p2 := []
+	for p in my_pills:
+		var rel := p.position - origin
+		p1.append([rel.x, rel.y])
+	for p in opp_pills:
+		var rel := p.position - origin
+		p2.append([rel.x, rel.y])
+	var b_rel := ball.position - origin
+	return {"p1": p1, "p2": p2, "ball": [b_rel.x, b_rel.y]}
+
+func _apply_synced_positions(positions: Dictionary) -> void:
+	var origin := Constants.FIELD_RECT.position
+	var p1_data: Array = positions.get("p1", [])
+	var p2_data: Array = positions.get("p2", [])
+	var my_data: Array = p1_data if i_am_player1 else p2_data
+	var opp_data: Array = p2_data if i_am_player1 else p1_data
+	for i in range(mini(my_data.size(), my_pills.size())):
+		var target := origin + Vector2(float(my_data[i][0]), float(my_data[i][1]))
+		my_pills[i].position = target
+		my_pills[i].linear_velocity = Vector2.ZERO
+	for i in range(mini(opp_data.size(), opp_pills.size())):
+		var target := origin + Vector2(float(opp_data[i][0]), float(opp_data[i][1]))
+		opp_pills[i].position = target
+		opp_pills[i].linear_velocity = Vector2.ZERO
+	if positions.has("ball") and ball:
+		var b: Array = positions.get("ball")
+		ball.position = origin + Vector2(float(b[0]), float(b[1]))
+		ball.linear_velocity = Vector2.ZERO
 
 func _all_stopped() -> bool:
 	if not ball.linear_velocity.length() < Constants.SETTLE_VELOCITY_THRESHOLD:

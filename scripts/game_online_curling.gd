@@ -150,7 +150,9 @@ func _rebuild_pills():
 	_build_pills()
 	_assign_avatars()
 
-func _on_match_started(p_round: int, _p_aim_time: float):
+func _on_match_started(p_round: int, _p_aim_time: float, positions: Dictionary = {}):
+	if positions is Dictionary and positions.size() > 0:
+		_apply_synced_positions(positions)
 	end_num = p_round
 	my_used.clear()
 	opp_used.clear()
@@ -159,7 +161,9 @@ func _on_match_started(p_round: int, _p_aim_time: float):
 	center_msg.visible = false
 	_clear_aim()
 
-func _on_curling_turn(whose_turn: String, p_shot_number: int, p_aim_time: float):
+func _on_curling_turn(whose_turn: String, p_shot_number: int, p_aim_time: float, positions: Dictionary = {}):
+	if positions is Dictionary and positions.size() > 0:
+		_apply_synced_positions(positions)
 	shot_number = p_shot_number
 	aim_timer = p_aim_time
 	settle_timer = 0.0
@@ -326,10 +330,13 @@ func _player_timeout():
 	phase = Phase.WAITING
 
 func _on_shot_settled():
+	if not i_am_player1:
+		phase = Phase.WAITING
+		return
 	if shot_number >= 6:
 		_report_end_scores()
 	else:
-		Online.report_curling_shot_settled()
+		Online.report_curling_shot_settled(_collect_positions())
 		phase = Phase.WAITING
 
 func _report_end_scores():
@@ -352,9 +359,10 @@ func _report_end_scores():
 
 	var points: int = 0
 	var winner_id: String = ""
+	var pos := _collect_positions()
 
 	if my_dists.is_empty() and opp_dists.is_empty():
-		Online.report_curling_end_result("", 0)
+		Online.report_curling_end_result("", 0, pos)
 		return
 
 	if opp_dists.is_empty():
@@ -378,11 +386,38 @@ func _report_end_scores():
 			else:
 				break
 
-	Online.report_curling_end_result(winner_id, points)
+	Online.report_curling_end_result(winner_id, points, pos)
 
 func _house_center() -> Vector2:
 	var f: Rect2 = Constants.FIELD_RECT
 	return Vector2(f.position.x + f.size.x / 2.0, f.position.y + f.size.y / 2.0)
+
+func _collect_positions() -> Dictionary:
+	var origin := Constants.FIELD_RECT.position
+	var p1 := []
+	var p2 := []
+	for p in my_pills:
+		var rel := p.position - origin
+		p1.append([rel.x, rel.y])
+	for p in opp_pills:
+		var rel := p.position - origin
+		p2.append([rel.x, rel.y])
+	return {"p1": p1, "p2": p2}
+
+func _apply_synced_positions(positions: Dictionary) -> void:
+	var origin := Constants.FIELD_RECT.position
+	var p1_data: Array = positions.get("p1", [])
+	var p2_data: Array = positions.get("p2", [])
+	var my_data: Array = p1_data if i_am_player1 else p2_data
+	var opp_data: Array = p2_data if i_am_player1 else p1_data
+	for i in range(mini(my_data.size(), my_pills.size())):
+		var target := origin + Vector2(float(my_data[i][0]), float(my_data[i][1]))
+		my_pills[i].position = target
+		my_pills[i].linear_velocity = Vector2.ZERO
+	for i in range(mini(opp_data.size(), opp_pills.size())):
+		var target := origin + Vector2(float(opp_data[i][0]), float(opp_data[i][1]))
+		opp_pills[i].position = target
+		opp_pills[i].linear_velocity = Vector2.ZERO
 
 func _all_stopped() -> bool:
 	for pill in my_pills + opp_pills:

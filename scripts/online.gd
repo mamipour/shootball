@@ -4,7 +4,7 @@ extends Node
 
 signal authenticated
 signal matchmaker_found(match_id: String, opponent_name: String, my_side: String)
-signal match_started(round_num: int, aim_time: float)
+signal match_started(round_num: int, aim_time: float, positions: Dictionary)
 signal shots_received(player1_shot: Dictionary, player2_shot: Dictionary)
 signal multi_shots_received(player1_shots: Array, player2_shots: Array)
 signal goal_scored(scorer_id: String, scores: Dictionary)
@@ -13,7 +13,7 @@ signal opponent_left
 signal timer_sync(remaining: float)
 signal opponent_info_received(opp_name: String, opp_avatar: int)
 signal elimination_received(eliminations: Array)
-signal curling_turn_started(whose_turn: String, shot_number: int, aim_time: float)
+signal curling_turn_started(whose_turn: String, shot_number: int, aim_time: float, positions: Dictionary)
 signal curling_end_scored(winner: String, points: int, scores: Dictionary)
 signal connection_error(msg: String)
 
@@ -188,43 +188,51 @@ func send_ready() -> void:
 	})
 	socket.send_match_state_async(match_id, OP_PLAYER_READY, data)
 
-func report_round_result(scorer_id: String) -> void:
+func report_round_result(scorer_id: String, positions: Dictionary = {}) -> void:
 	if not socket or match_id == "":
 		return
-	var data := JSON.stringify({
+	var payload := {
 		"type": "round_result",
 		"scorer": scorer_id,
-	})
-	socket.send_match_state_async(match_id, OP_ROUND_RESULT, data)
+	}
+	if positions.size() > 0:
+		payload["positions"] = positions
+	socket.send_match_state_async(match_id, OP_ROUND_RESULT, JSON.stringify(payload))
 
-func report_curling_end_result(winner_id: String, points: int) -> void:
+func report_curling_end_result(winner_id: String, points: int, positions: Dictionary = {}) -> void:
 	if not socket or match_id == "":
 		return
-	var data := JSON.stringify({
+	var payload := {
 		"type": "round_result",
 		"curling_end": true,
 		"winner": winner_id,
 		"points": points,
-	})
-	socket.send_match_state_async(match_id, OP_ROUND_RESULT, data)
+	}
+	if positions.size() > 0:
+		payload["positions"] = positions
+	socket.send_match_state_async(match_id, OP_ROUND_RESULT, JSON.stringify(payload))
 
-func report_curling_shot_settled() -> void:
+func report_curling_shot_settled(positions: Dictionary = {}) -> void:
 	if not socket or match_id == "":
 		return
-	var data := JSON.stringify({
+	var payload := {
 		"type": "round_result",
 		"curling_shot_settled": true,
-	})
-	socket.send_match_state_async(match_id, OP_ROUND_RESULT, data)
+	}
+	if positions.size() > 0:
+		payload["positions"] = positions
+	socket.send_match_state_async(match_id, OP_ROUND_RESULT, JSON.stringify(payload))
 
-func report_elimination_result(eliminations: Array) -> void:
+func report_elimination_result(eliminations: Array, positions: Dictionary = {}) -> void:
 	if not socket or match_id == "":
 		return
-	var data := JSON.stringify({
+	var payload := {
 		"type": "round_result",
 		"eliminations": eliminations,
-	})
-	socket.send_match_state_async(match_id, OP_ROUND_RESULT, data)
+	}
+	if positions.size() > 0:
+		payload["positions"] = positions
+	socket.send_match_state_async(match_id, OP_ROUND_RESULT, JSON.stringify(payload))
 
 func leave_match() -> void:
 	if socket and match_id != "":
@@ -267,9 +275,13 @@ func _on_match_state(p_state: NakamaRTAPI.MatchData):
 
 	match p_state.op_code:
 		OP_ROUND_START:
+			var rs_pos = data.get("positions", {})
+			if not rs_pos is Dictionary:
+				rs_pos = {}
 			match_started.emit(
 				data.get("round", 0),
 				data.get("aim_time", 8.0),
+				rs_pos,
 			)
 		OP_SHOTS_EXECUTE:
 			var p1 := data.get("player1", {}) as Dictionary
@@ -307,10 +319,14 @@ func _on_match_state(p_state: NakamaRTAPI.MatchData):
 			var elims: Array = data.get("eliminations", [])
 			elimination_received.emit(elims)
 		OP_CURLING_TURN:
+			var ct_pos = data.get("positions", {})
+			if not ct_pos is Dictionary:
+				ct_pos = {}
 			curling_turn_started.emit(
 				data.get("whose_turn", ""),
 				int(data.get("shot_number", 1)),
 				float(data.get("aim_time", 10.0)),
+				ct_pos,
 			)
 		OP_CURLING_END_SCORED:
 			curling_end_scored.emit(

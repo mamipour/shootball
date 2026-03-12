@@ -158,7 +158,9 @@ func _rebuild_pills():
 	_build_pills()
 	_assign_avatars()
 
-func _on_match_started(p_round: int, p_aim_time: float):
+func _on_match_started(p_round: int, p_aim_time: float, positions: Dictionary = {}):
+	if positions is Dictionary and positions.size() > 0:
+		_apply_synced_positions(positions)
 	round_num = p_round
 	aim_timer = p_aim_time
 	phase = Phase.AIMING
@@ -304,7 +306,9 @@ func _check_goals_local():
 			return
 
 func _report_round_result():
-	# Determine scorer locally and report to server
+	if not i_am_player1:
+		phase = Phase.WAITING
+		return
 	var f: Rect2 = Constants.FIELD_RECT
 	var cy: float = f.position.y + f.size.y / 2.0
 	var gh: float = Constants.GOAL_WIDTH / 2.0
@@ -313,18 +317,42 @@ func _report_round_result():
 	for pill in my_pills + opp_pills:
 		var px: float = pill.position.x
 		var py: float = pill.position.y
-		# Right goal (player1 scores)
 		if px > f.position.x + f.size.x + 5.0 and py > cy - gh and py < cy + gh:
 			scorer_id = Online.user_id if i_am_player1 else Online.opponent_user_id
 			break
-		# Left goal (player2 scores)
 		if px < f.position.x - 5.0 and py > cy - gh and py < cy + gh:
 			scorer_id = Online.opponent_user_id if i_am_player1 else Online.user_id
 			break
 
-	Online.report_round_result(scorer_id)
-	# Wait for server to respond with GOAL_SCORED or ROUND_START
+	Online.report_round_result(scorer_id, _collect_positions())
 	phase = Phase.WAITING
+
+func _collect_positions() -> Dictionary:
+	var origin := Constants.FIELD_RECT.position
+	var p1 := []
+	var p2 := []
+	for p in my_pills:
+		var rel := p.position - origin
+		p1.append([rel.x, rel.y])
+	for p in opp_pills:
+		var rel := p.position - origin
+		p2.append([rel.x, rel.y])
+	return {"p1": p1, "p2": p2}
+
+func _apply_synced_positions(positions: Dictionary) -> void:
+	var origin := Constants.FIELD_RECT.position
+	var p1_data: Array = positions.get("p1", [])
+	var p2_data: Array = positions.get("p2", [])
+	var my_data: Array = p1_data if i_am_player1 else p2_data
+	var opp_data: Array = p2_data if i_am_player1 else p1_data
+	for i in range(mini(my_data.size(), my_pills.size())):
+		var target := origin + Vector2(float(my_data[i][0]), float(my_data[i][1]))
+		my_pills[i].position = target
+		my_pills[i].linear_velocity = Vector2.ZERO
+	for i in range(mini(opp_data.size(), opp_pills.size())):
+		var target := origin + Vector2(float(opp_data[i][0]), float(opp_data[i][1]))
+		opp_pills[i].position = target
+		opp_pills[i].linear_velocity = Vector2.ZERO
 
 func _all_stopped() -> bool:
 	for pill in my_pills + opp_pills:
