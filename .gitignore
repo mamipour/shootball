@@ -1,0 +1,31 @@
+# Godot 4+ specific ignores
+.godot/
+
+# Godot-specific ignores
+*.translation
+
+# Imported resources (re-generated on import)
+.import/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE / Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Export builds
+export/
+build/
+*.ipa
+*.apk
+*.aab
