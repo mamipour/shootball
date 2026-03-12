@@ -667,7 +667,8 @@ func _build_hud():
 	var fr := fl + Constants.FIELD_RECT.size.x
 	var avatar_size := 34.0
 	my_avatar_rect = TextureRect.new()
-	my_avatar_rect.position = Vector2(fl, 4)
+	var st := Constants.safe_top
+	my_avatar_rect.position = Vector2(fl, 4 + st)
 	my_avatar_rect.size = Vector2(avatar_size, avatar_size)
 	my_avatar_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	my_avatar_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -675,7 +676,7 @@ func _build_hud():
 
 	my_name_label = Label.new()
 	my_name_label.text = "You"
-	my_name_label.position = Vector2(fl + 40, 10)
+	my_name_label.position = Vector2(fl + 40, 10 + st)
 	my_name_label.size = Vector2(60, 30)
 	my_name_label.add_theme_font_size_override("font_size", 18)
 	my_name_label.add_theme_color_override("font_color", Color(0.6, 0.9, 1.0))
@@ -683,7 +684,7 @@ func _build_hud():
 
 	score_label = Label.new()
 	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	score_label.position = Vector2(vp.x / 2.0 - 50, 8)
+	score_label.position = Vector2(vp.x / 2.0 - 50, 8 + st)
 	score_label.size = Vector2(100, 50)
 	score_label.add_theme_font_size_override("font_size", 30)
 	score_label.add_theme_color_override("font_color", Color.WHITE)
@@ -691,14 +692,14 @@ func _build_hud():
 
 	opp_name_label = Label.new()
 	opp_name_label.text = "Opponent"
-	opp_name_label.position = Vector2(fr - 130, 10)
+	opp_name_label.position = Vector2(fr - 130, 10 + st)
 	opp_name_label.size = Vector2(90, 30)
 	opp_name_label.add_theme_font_size_override("font_size", 18)
 	opp_name_label.add_theme_color_override("font_color", Color(1.0, 0.65, 0.5))
 	hud_layer.add_child(opp_name_label)
 
 	opp_avatar_rect = TextureRect.new()
-	opp_avatar_rect.position = Vector2(fr - avatar_size, 4)
+	opp_avatar_rect.position = Vector2(fr - avatar_size, 4 + st)
 	opp_avatar_rect.size = Vector2(avatar_size, avatar_size)
 	opp_avatar_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	opp_avatar_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -741,7 +742,7 @@ func _build_hud():
 
 	quit_btn = Button.new()
 	quit_btn.text = "✕"
-	quit_btn.position = Vector2(1230, 8)
+	quit_btn.position = Vector2(vp.x - 50 - Constants.safe_right, 8 + Constants.safe_top)
 	quit_btn.size = Vector2(40, 40)
 	quit_btn.add_theme_font_size_override("font_size", 22)
 	quit_btn.pressed.connect(_on_quit_pressed)

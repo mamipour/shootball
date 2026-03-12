@@ -127,8 +127,14 @@ var BATTLE_AI_START := [
 
 const SETTINGS_PATH := "user://settings.cfg"
 
+var safe_top := 0.0
+var safe_bottom := 0.0
+var safe_left := 0.0
+var safe_right := 0.0
+
 func _ready():
 	_load_settings()
+	_calc_safe_area()
 	_center_field()
 
 func _center_field():
@@ -178,6 +184,21 @@ func _center_arena(vp_size: Vector2):
 		Vector2(ax + aw * 0.84, acy + ah * 0.27),
 		Vector2(ax + aw * 0.92, acy),
 	]
+
+func _calc_safe_area():
+	var vp := get_viewport().get_visible_rect().size
+	if vp.x <= 0:
+		return
+	var sa := DisplayServer.get_display_safe_area()
+	var screen := DisplayServer.screen_get_size()
+	if screen.x <= 0 or screen.y <= 0:
+		return
+	var sx := vp.x / float(screen.x)
+	var sy := vp.y / float(screen.y)
+	safe_top = sa.position.y * sy
+	safe_left = sa.position.x * sx
+	safe_right = (screen.x - sa.position.x - sa.size.x) * sx
+	safe_bottom = (screen.y - sa.position.y - sa.size.y) * sy
 
 func _load_settings():
 	var cfg := ConfigFile.new()

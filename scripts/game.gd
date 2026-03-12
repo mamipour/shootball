@@ -514,7 +514,10 @@ func _ray_hits_segment(origin: Vector2, dir: Vector2, a: Vector2, b: Vector2) ->
 # ═══════════════════════════════════════════════════════════════
 
 func _draw():
-	draw_rect(Rect2(0, 0, 1280, 720), Color(0.06, 0.06, 0.10))
+	var vp := get_viewport().get_visible_rect().size
+	if vp.x <= 0:
+		vp = Vector2(1280, 720)
+	draw_rect(Rect2(0, 0, vp.x, vp.y), Color(0.06, 0.06, 0.10))
 	_draw_field()
 	_draw_field_lines()
 	_draw_goal_pockets()
@@ -724,7 +727,7 @@ func _build_hud():
 
 	score_label = Label.new()
 	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	score_label.position = Vector2(440, 8)
+	score_label.position = Vector2(440, 8 + Constants.safe_top)
 	score_label.size = Vector2(400, 50)
 	score_label.add_theme_font_size_override("font_size", 30)
 	score_label.add_theme_color_override("font_color", Color.WHITE)
@@ -786,7 +789,7 @@ func _build_hud():
 
 	quit_btn = Button.new()
 	quit_btn.text = "✕"
-	quit_btn.position = Vector2(1230, 8)
+	quit_btn.position = Vector2(vp.x - 50 - Constants.safe_right, 8 + Constants.safe_top)
 	quit_btn.size = Vector2(40, 40)
 	quit_btn.add_theme_font_size_override("font_size", 22)
 	quit_btn.pressed.connect(_on_quit_pressed)

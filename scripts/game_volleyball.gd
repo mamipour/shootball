@@ -719,7 +719,7 @@ func _build_hud():
 
 	score_label = Label.new()
 	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	score_label.position = Vector2(vp.x / 2.0 - 200, 8)
+	score_label.position = Vector2(vp.x / 2.0 - 200, 8 + Constants.safe_top)
 	score_label.size = Vector2(400, 50)
 	score_label.add_theme_font_size_override("font_size", 30)
 	score_label.add_theme_color_override("font_color", Color.WHITE)
@@ -780,7 +780,7 @@ func _build_hud():
 
 	quit_btn = Button.new()
 	quit_btn.text = "✕"
-	quit_btn.position = Vector2(vp.x - 50, 8)
+	quit_btn.position = Vector2(vp.x - 50 - Constants.safe_right, 8 + Constants.safe_top)
 	quit_btn.size = Vector2(40, 40)
 	quit_btn.add_theme_font_size_override("font_size", 22)
 	quit_btn.pressed.connect(_on_quit_pressed)
