@@ -397,10 +397,10 @@ func _collect_positions() -> Dictionary:
 	var p1 := []
 	var p2 := []
 	for p in my_pills:
-		var rel := p.position - origin
+		var rel: Vector2 = p.position - origin
 		p1.append([rel.x, rel.y])
 	for p in opp_pills:
-		var rel := p.position - origin
+		var rel: Vector2 = p.position - origin
 		p2.append([rel.x, rel.y])
 	return {"p1": p1, "p2": p2}
 

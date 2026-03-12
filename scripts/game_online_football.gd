@@ -356,12 +356,12 @@ func _collect_positions() -> Dictionary:
 	var p1 := []
 	var p2 := []
 	for p in my_pills:
-		var rel := p.position - origin
+		var rel: Vector2 = p.position - origin
 		p1.append([rel.x, rel.y])
 	for p in opp_pills:
-		var rel := p.position - origin
+		var rel: Vector2 = p.position - origin
 		p2.append([rel.x, rel.y])
-	var b_rel := ball.position - origin
+	var b_rel: Vector2 = ball.position - origin
 	return {"p1": p1, "p2": p2, "ball": [b_rel.x, b_rel.y]}
 
 func _apply_synced_positions(positions: Dictionary) -> void:
