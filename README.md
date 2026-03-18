@@ -5,7 +5,7 @@
 A cross-platform multiplayer game built with Godot 4.x where players flick disc-shaped pills across various game fields using slingshot aiming. Play solo against AI or compete online against real opponents with server-authoritative physics.
 
 <p align="center">
-  <img src="assets/menu-bg2.jpg" alt="Shootball" width="600">
+  <img src="assets/gameplay.png" alt="Shootball Gameplay" width="600">
 </p>
 
 ## Game Modes
