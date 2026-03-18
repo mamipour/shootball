@@ -1,6 +1,8 @@
 # Shootball
 
-**Penny Football — Reimagined**
+**Penny Football - Reimagined**
+
+My son **Araz**, 9 years old at the moment of releasing this game, challenged me to turn our kitchen-table penny football matches into a real game. Every mode, every rule twist, and half the "that's not fair!" balancing feedback came from him. Consider him the creative director - I just wrote the code.
 
 A cross-platform multiplayer game built with Godot 4.x where players flick disc-shaped pills across various game fields using slingshot aiming. Play solo against AI or compete online against real opponents with server-authoritative physics.
 
@@ -16,16 +18,16 @@ A cross-platform multiplayer game built with Godot 4.x where players flick disc-
 | **Football** | Push a ball into the opponent's goal | First to 3 goals |
 | **Battle Arena** | Knock opponents into gravitational pits | Last team standing (best of 3) |
 | **Volleyball** | Smack the ball over the net onto the opponent's side | First to 3 points |
-| **Curling** | Slide pills toward the house — closest to the button scores | First to 5 ends |
+| **Curling** | Slide pills toward the house - closest to the button scores | First to 5 ends |
 
 All five modes support both **solo** (vs AI) and **online** (vs real players) play.
 
 ## How to Play
 
-1. **Aim** — Touch or click and drag behind your pill to set direction and power (slingshot style)
-2. **Release** — Let go to shoot. In simultaneous modes, both players shoot blind at the same time
-3. **Watch** — Physics resolves collisions, bounces, and scoring
-4. **Repeat** — Next round begins after all pills settle
+1. **Aim** - Touch or click and drag behind your pill to set direction and power (slingshot style)
+2. **Release** - Let go to shoot. In simultaneous modes, both players shoot blind at the same time
+3. **Watch** - Physics resolves collisions, bounces, and scoring
+4. **Repeat** - Next round begins after all pills settle
 
 ## Screenshots
 
