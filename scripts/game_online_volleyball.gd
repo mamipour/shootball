@@ -1,25 +1,9 @@
 extends Node2D
 
-# Online multiplayer Volleyball mode.
-# Multi-shot aiming, ball + net, ball-side scoring.
-
-enum Phase { WAITING, AIMING, EXECUTING, SETTLING, POINT_SCORED, GAME_OVER }
+enum Phase { WAITING, AIMING, EXECUTING, POINT_SCORED, GAME_OVER }
 
 class _VBall extends RigidBody2D:
 	var ball_texture: Texture2D = null
-	var _reset_pos: Vector2 = Vector2.ZERO
-	var _has_reset: bool = false
-
-	func reset_to(pos: Vector2):
-		_reset_pos = pos
-		_has_reset = true
-
-	func _integrate_forces(state: PhysicsDirectBodyState2D):
-		if _has_reset:
-			state.transform = Transform2D(0, _reset_pos)
-			state.linear_velocity = Vector2.ZERO
-			state.angular_velocity = 0.0
-			_has_reset = false
 
 	func _draw():
 		var r: float = Constants.VB_BALL_RADIUS
@@ -59,8 +43,6 @@ var my_score: int = 0
 var opp_score: int = 0
 var round_num: int = 0
 var i_am_player1: bool = true
-var ball_side: String = "player1"
-var ball_start_side: String = "player1"
 
 # ── Multi-shot aiming ──
 var selected_pill: Pill = null
@@ -75,11 +57,15 @@ var shots_submitted: bool = false
 # ── Timer ──
 var aim_timer: float = 0.0
 
-# ── Settling ──
-var settle_timer: float = 0.0
-
 # ── Point ──
 var point_timer: float = 0.0
+
+# ── Trajectory replay ──
+var trajectory: Array = []
+var sim_data: Dictionary = {}
+var replay_idx: int = 0
+var replay_timer: float = 0.0
+const FRAME_DT := 0.05
 
 # ── Assets ──
 var sand_texture: Texture2D = null
@@ -109,12 +95,8 @@ func _ready():
 	_build_hud()
 	_assign_avatars()
 
-	ball_side = "player1" if randi() % 2 == 0 else "player2"
-	_place_ball_on_side(ball_side)
-
 	Online.match_started.connect(_on_match_started)
-	Online.multi_shots_received.connect(_on_multi_shots_received)
-	Online.goal_scored.connect(_on_point_scored)
+	Online.sim_result_received.connect(_on_sim_result)
 	Online.game_over.connect(_on_game_over)
 	Online.opponent_left.connect(_on_opponent_left)
 	Online.timer_sync.connect(_on_timer_sync)
@@ -187,7 +169,7 @@ func _rebuild_pills():
 
 func _on_match_started(p_round: int, p_aim_time: float, positions: Dictionary = {}):
 	if positions is Dictionary and positions.size() > 0:
-		_apply_synced_positions(positions)
+		_apply_positions_from_server(positions)
 	round_num = p_round
 	aim_timer = p_aim_time
 	phase = Phase.AIMING
@@ -195,55 +177,21 @@ func _on_match_started(p_round: int, p_aim_time: float, positions: Dictionary = 
 	shots_submitted = false
 	aim_pow = 0.0
 	aim_dir = Vector2.ZERO
-	settle_timer = 0.0
 	center_msg.visible = false
 	selected_pill = null
 	shot_map.clear()
-	ball_start_side = ball_side
 	for p in my_pills:
 		p.is_selected = false
 	if round_num == 1:
 		selected_pill = my_pills[2]
 		my_pills[2].is_selected = true
 
-func _on_multi_shots_received(p1_shots: Array, p2_shots: Array):
+func _on_sim_result(data: Dictionary):
+	trajectory = data.get("frames", [])
+	sim_data = data
+	replay_idx = 0
+	replay_timer = 0.0
 	phase = Phase.EXECUTING
-	settle_timer = 0.0
-
-	var my_shots: Array = p1_shots if i_am_player1 else p2_shots
-	var opp_shots: Array = p2_shots if i_am_player1 else p1_shots
-
-	for s in my_shots:
-		var idx: int = int(s.get("pill_idx", 0))
-		var dir := Vector2(float(s.get("dir_x", 0)), float(s.get("dir_y", 0)))
-		var power: float = float(s.get("power", 0))
-		if idx >= 0 and idx < 3 and power > 0:
-			my_pills[idx].kick(dir.normalized() * power)
-
-	for s in opp_shots:
-		var idx: int = int(s.get("pill_idx", 0))
-		var dir := Vector2(float(s.get("dir_x", 0)), float(s.get("dir_y", 0)))
-		var power: float = float(s.get("power", 0))
-		if idx >= 0 and idx < 3 and power > 0:
-			opp_pills[idx].kick(dir.normalized() * power)
-
-	for p in my_pills:
-		p.is_selected = false
-	selected_pill = null
-
-func _on_point_scored(scorer_id: String, scores: Dictionary):
-	point_sfx.play()
-	_update_scores_from_server(scores)
-	phase = Phase.POINT_SCORED
-	point_timer = Constants.GOAL_DISPLAY_TIME
-	var i_scored := (scorer_id == Online.user_id)
-	center_msg.text = "You score!" if i_scored else "Opponent scores!"
-	center_msg.visible = true
-	# After point, ball goes to winner's side
-	if scorer_id == Online.user_id:
-		ball_side = "player1" if i_am_player1 else "player2"
-	else:
-		ball_side = "player2" if i_am_player1 else "player1"
 
 func _on_game_over(winner_id: String, reason: String, scores: Dictionary):
 	_update_scores_from_server(scores)
@@ -285,22 +233,19 @@ func _process(delta: float):
 				aim_timer = 0.0
 				_submit_all_shots()
 		Phase.EXECUTING:
-			settle_timer += delta
-			if settle_timer > 0.5:
-				phase = Phase.SETTLING
-				settle_timer = 0.0
-		Phase.SETTLING:
-			if _all_stopped():
-				settle_timer += delta
-				if settle_timer >= Constants.SETTLE_GRACE_TIME:
-					_report_round_result()
-			else:
-				settle_timer = 0.0
+			replay_timer += delta
+			while replay_timer >= FRAME_DT and replay_idx < trajectory.size():
+				_set_positions(trajectory[replay_idx])
+				replay_idx += 1
+				replay_timer -= FRAME_DT
+			if replay_idx >= trajectory.size():
+				_on_replay_complete()
 		Phase.POINT_SCORED:
 			point_timer -= delta
 			if point_timer <= 0.0:
 				_reset_all()
 				Online.send_ready()
+				phase = Phase.WAITING
 		Phase.GAME_OVER:
 			pass
 
@@ -317,90 +262,75 @@ func _submit_all_shots():
 		shots_arr.append({"pill_idx": pill.pill_index, "dir": shot.dir, "power": shot.power})
 	Online.submit_multi_shot(shots_arr)
 
-func _check_ball_side() -> String:
-	var f: Rect2 = Constants.FIELD_RECT
-	var cx: float = f.position.x + f.size.x / 2.0
-	if ball.position.x < cx:
-		return "player1"
-	else:
-		return "player2"
+# ── Trajectory replay ──
 
-func _report_round_result():
-	if not i_am_player1:
-		phase = Phase.WAITING
-		return
-	var current_side: String = _check_ball_side()
-	var scorer_id := ""
-
-	if current_side == ball_start_side:
-		if ball_start_side == "player1":
-			scorer_id = Online.opponent_user_id if i_am_player1 else Online.user_id
-		else:
-			scorer_id = Online.user_id if i_am_player1 else Online.opponent_user_id
-	else:
-		ball_side = current_side
-
-	Online.report_round_result(scorer_id, _collect_positions())
-	phase = Phase.WAITING
-
-func _collect_positions() -> Dictionary:
+func _set_positions(frame: Array):
 	var origin := Constants.FIELD_RECT.position
-	var p1 := []
-	var p2 := []
-	for p in my_pills:
-		var rel: Vector2 = p.position - origin
-		p1.append([rel.x, rel.y])
-	for p in opp_pills:
-		var rel: Vector2 = p.position - origin
-		p2.append([rel.x, rel.y])
-	var b_rel: Vector2 = ball.position - origin
-	return {"p1": p1, "p2": p2, "ball": [b_rel.x, b_rel.y]}
+	for i in range(mini(3, frame.size())):
+		var pos := origin + Vector2(float(frame[i][0]), float(frame[i][1]))
+		if i_am_player1:
+			my_pills[i].position = pos
+		else:
+			opp_pills[i].position = pos
+	for i in range(3, mini(6, frame.size())):
+		var pos := origin + Vector2(float(frame[i][0]), float(frame[i][1]))
+		if i_am_player1:
+			opp_pills[i - 3].position = pos
+		else:
+			my_pills[i - 3].position = pos
+	if frame.size() > 6:
+		ball.position = origin + Vector2(float(frame[6][0]), float(frame[6][1]))
 
-func _apply_synced_positions(positions: Dictionary) -> void:
+func _apply_positions_from_server(positions: Dictionary):
 	var origin := Constants.FIELD_RECT.position
 	var p1_data: Array = positions.get("p1", [])
 	var p2_data: Array = positions.get("p2", [])
 	var my_data: Array = p1_data if i_am_player1 else p2_data
 	var opp_data: Array = p2_data if i_am_player1 else p1_data
 	for i in range(mini(my_data.size(), my_pills.size())):
-		var target := origin + Vector2(float(my_data[i][0]), float(my_data[i][1]))
-		my_pills[i].position = target
-		my_pills[i].linear_velocity = Vector2.ZERO
+		my_pills[i].position = origin + Vector2(float(my_data[i][0]), float(my_data[i][1]))
 	for i in range(mini(opp_data.size(), opp_pills.size())):
-		var target := origin + Vector2(float(opp_data[i][0]), float(opp_data[i][1]))
-		opp_pills[i].position = target
-		opp_pills[i].linear_velocity = Vector2.ZERO
+		opp_pills[i].position = origin + Vector2(float(opp_data[i][0]), float(opp_data[i][1]))
 	if positions.has("ball") and ball:
 		var b: Array = positions.get("ball")
 		ball.position = origin + Vector2(float(b[0]), float(b[1]))
-		ball.linear_velocity = Vector2.ZERO
 
-func _all_stopped() -> bool:
-	if ball.linear_velocity.length() >= Constants.SETTLE_VELOCITY_THRESHOLD:
-		return false
-	for pill in my_pills + opp_pills:
-		if not pill.is_stopped():
-			return false
-	return true
+func _on_replay_complete():
+	_set_positions(sim_data.get("final_positions", []))
+	var scorer = sim_data.get("scorer", "")
+	var is_game_over = sim_data.get("game_over", false)
 
-func _place_ball_on_side(side: String):
-	var f: Rect2 = Constants.FIELD_RECT
-	var cy: float = f.position.y + f.size.y / 2.0
-	var ball_x: float
-	if (side == "player1") == i_am_player1:
-		ball_x = f.position.x + f.size.x * 0.25
+	if is_game_over:
+		var winner = sim_data.get("winner", "")
+		_update_scores_from_server(sim_data.get("scores", {}))
+		phase = Phase.GAME_OVER
+		center_msg.text = "YOU WIN!" if winner == Online.user_id else "YOU LOSE!"
+		center_msg.visible = true
+		stadium_music.stop()
+		win_sfx.play()
+	elif scorer != "":
+		point_sfx.play()
+		_update_scores_from_server(sim_data.get("scores", {}))
+		phase = Phase.POINT_SCORED
+		point_timer = Constants.GOAL_DISPLAY_TIME
+		var i_scored := (scorer == Online.user_id)
+		center_msg.text = "You score!" if i_scored else "Opponent scores!"
+		center_msg.visible = true
 	else:
-		ball_x = f.position.x + f.size.x * 0.75
-	ball.reset_to(Vector2(ball_x, cy))
+		phase = Phase.WAITING
+		Online.send_ready()
 
 func _reset_all():
-	_place_ball_on_side(ball_side)
+	var f: Rect2 = Constants.FIELD_RECT
+	var cx: float = f.position.x + f.size.x / 2.0
+	var cy: float = f.position.y + f.size.y / 2.0
+	ball.position = Vector2(cx, cy)
 	var my_starts: Array = Constants.PLAYER_START if i_am_player1 else Constants.AI_START
 	var opp_starts: Array = Constants.AI_START if i_am_player1 else Constants.PLAYER_START
 	for i in range(3):
-		my_pills[i].reset_to(my_starts[i])
+		my_pills[i].position = my_starts[i]
 	for i in range(3):
-		opp_pills[i].reset_to(opp_starts[i])
+		opp_pills[i].position = opp_starts[i]
 
 # ── Input ──
 
@@ -563,7 +493,7 @@ func _update_hud():
 				timer_bar_style.bg_color = Color(0.95, 0.85, 0.1)
 			else:
 				timer_bar_style.bg_color = Color(0.95, 0.2, 0.15)
-		Phase.EXECUTING, Phase.SETTLING:
+		Phase.EXECUTING:
 			timer_bar.visible = false
 		Phase.POINT_SCORED:
 			timer_bar.visible = false
@@ -580,6 +510,7 @@ func _build_ball():
 	ball.linear_damp = Constants.VB_BALL_LINEAR_DAMP
 	ball.collision_layer = 1
 	ball.collision_mask = 1
+	ball.freeze = true
 	var mat := PhysicsMaterial.new()
 	mat.bounce = Constants.VB_BALL_BOUNCE
 	mat.friction = Constants.VB_BALL_FRICTION
@@ -589,6 +520,8 @@ func _build_ball():
 	var col := CollisionShape2D.new()
 	col.shape = shape
 	ball.add_child(col)
+	var f: Rect2 = Constants.FIELD_RECT
+	ball.position = Vector2(f.position.x + f.size.x / 2.0, f.position.y + f.size.y / 2.0)
 	add_child(ball)
 
 func _build_walls():
@@ -647,6 +580,7 @@ func _build_pills():
 		p.pill_color_light = my_color_light
 		p.position = my_starts[i]
 		p.collision_mask = 3
+		p.freeze = true
 		add_child(p)
 		my_pills.append(p)
 
@@ -658,6 +592,7 @@ func _build_pills():
 		p.pill_color_light = opp_color_light
 		p.position = opp_starts[i]
 		p.collision_mask = 3
+		p.freeze = true
 		add_child(p)
 		opp_pills.append(p)
 

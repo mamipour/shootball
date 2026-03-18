@@ -15,6 +15,7 @@ signal opponent_info_received(opp_name: String, opp_avatar: int)
 signal elimination_received(eliminations: Array)
 signal curling_turn_started(whose_turn: String, shot_number: int, aim_time: float, positions: Dictionary)
 signal curling_end_scored(winner: String, points: int, scores: Dictionary)
+signal sim_result_received(data: Dictionary)
 signal connection_error(msg: String)
 
 const SERVER_HOST := "shootball.avardgah.com"
@@ -51,6 +52,7 @@ const OP_MULTI_SHOTS_EXECUTE := 12
 const OP_ELIMINATION := 13
 const OP_CURLING_TURN := 14
 const OP_CURLING_END_SCORED := 15
+const OP_SIM_RESULT := 16
 
 func _ready():
 	client = Nakama.create_client(SERVER_KEY, SERVER_HOST, SERVER_PORT, "http")
@@ -188,51 +190,6 @@ func send_ready() -> void:
 	})
 	socket.send_match_state_async(match_id, OP_PLAYER_READY, data)
 
-func report_round_result(scorer_id: String, positions: Dictionary = {}) -> void:
-	if not socket or match_id == "":
-		return
-	var payload := {
-		"type": "round_result",
-		"scorer": scorer_id,
-	}
-	if positions.size() > 0:
-		payload["positions"] = positions
-	socket.send_match_state_async(match_id, OP_ROUND_RESULT, JSON.stringify(payload))
-
-func report_curling_end_result(winner_id: String, points: int, positions: Dictionary = {}) -> void:
-	if not socket or match_id == "":
-		return
-	var payload := {
-		"type": "round_result",
-		"curling_end": true,
-		"winner": winner_id,
-		"points": points,
-	}
-	if positions.size() > 0:
-		payload["positions"] = positions
-	socket.send_match_state_async(match_id, OP_ROUND_RESULT, JSON.stringify(payload))
-
-func report_curling_shot_settled(positions: Dictionary = {}) -> void:
-	if not socket or match_id == "":
-		return
-	var payload := {
-		"type": "round_result",
-		"curling_shot_settled": true,
-	}
-	if positions.size() > 0:
-		payload["positions"] = positions
-	socket.send_match_state_async(match_id, OP_ROUND_RESULT, JSON.stringify(payload))
-
-func report_elimination_result(eliminations: Array, positions: Dictionary = {}) -> void:
-	if not socket or match_id == "":
-		return
-	var payload := {
-		"type": "round_result",
-		"eliminations": eliminations,
-	}
-	if positions.size() > 0:
-		payload["positions"] = positions
-	socket.send_match_state_async(match_id, OP_ROUND_RESULT, JSON.stringify(payload))
 
 func leave_match() -> void:
 	if socket and match_id != "":
@@ -334,6 +291,8 @@ func _on_match_state(p_state: NakamaRTAPI.MatchData):
 				int(data.get("points", 0)),
 				data.get("scores", {}),
 			)
+		OP_SIM_RESULT:
+			sim_result_received.emit(data)
 
 func _on_socket_closed():
 	print("[Online] Socket closed")

@@ -1,9 +1,6 @@
 extends Node2D
 
-# Online multiplayer Battle Arena mode.
-# Multi-shot aiming, central pit with gravity, elimination-based win condition.
-
-enum Phase { WAITING, AIMING, EXECUTING, SETTLING, ELIMINATION, GAME_OVER }
+enum Phase { WAITING, AIMING, EXECUTING, ELIMINATION, GAME_OVER }
 
 # ── Nodes ──
 var my_pills: Array = []
@@ -40,11 +37,15 @@ var shots_submitted: bool = false
 # ── Timer ──
 var aim_timer: float = 0.0
 
-# ── Settling ──
-var settle_timer: float = 0.0
-
 # ── Elimination display ──
 var elim_timer: float = 0.0
+
+# ── Trajectory replay ──
+var trajectory: Array = []
+var sim_data: Dictionary = {}
+var replay_idx: int = 0
+var replay_timer: float = 0.0
+const FRAME_DT := 0.05
 
 # ── Pit ──
 var pit_center := Vector2.ZERO
@@ -78,8 +79,7 @@ func _ready():
 	_assign_avatars()
 
 	Online.match_started.connect(_on_match_started)
-	Online.multi_shots_received.connect(_on_multi_shots_received)
-	Online.elimination_received.connect(_on_elimination_received)
+	Online.sim_result_received.connect(_on_sim_result)
 	Online.game_over.connect(_on_game_over)
 	Online.opponent_left.connect(_on_opponent_left)
 	Online.timer_sync.connect(_on_timer_sync)
@@ -152,7 +152,7 @@ func _rebuild_pills():
 
 func _on_match_started(p_round: int, p_aim_time: float, positions: Dictionary = {}):
 	if positions is Dictionary and positions.size() > 0:
-		_apply_synced_positions(positions)
+		_apply_positions_from_server(positions)
 	round_num = p_round
 	aim_timer = p_aim_time
 	phase = Phase.AIMING
@@ -160,7 +160,6 @@ func _on_match_started(p_round: int, p_aim_time: float, positions: Dictionary = 
 	shots_submitted = false
 	aim_pow = 0.0
 	aim_dir = Vector2.ZERO
-	settle_timer = 0.0
 	center_msg.visible = false
 	selected_pill = null
 	shot_map.clear()
@@ -171,45 +170,12 @@ func _on_match_started(p_round: int, p_aim_time: float, positions: Dictionary = 
 		selected_pill = my_pills[2]
 		my_pills[2].is_selected = true
 
-func _on_multi_shots_received(p1_shots: Array, p2_shots: Array):
+func _on_sim_result(data: Dictionary):
+	trajectory = data.get("frames", [])
+	sim_data = data
+	replay_idx = 0
+	replay_timer = 0.0
 	phase = Phase.EXECUTING
-	settle_timer = 0.0
-
-	var my_shots: Array
-	var opp_shots: Array
-	if i_am_player1:
-		my_shots = p1_shots
-		opp_shots = p2_shots
-	else:
-		my_shots = p2_shots
-		opp_shots = p1_shots
-
-	for s in my_shots:
-		var idx: int = int(s.get("pill_idx", 0))
-		var dir := Vector2(float(s.get("dir_x", 0)), float(s.get("dir_y", 0)))
-		var power: float = float(s.get("power", 0))
-		if idx >= 0 and idx < 3 and power > 0 and idx < my_pills.size() and my_pills[idx].visible:
-			my_pills[idx].kick(dir.normalized() * power)
-
-	for s in opp_shots:
-		var idx: int = int(s.get("pill_idx", 0))
-		var dir := Vector2(float(s.get("dir_x", 0)), float(s.get("dir_y", 0)))
-		var power: float = float(s.get("power", 0))
-		if idx >= 0 and idx < 3 and power > 0 and idx < opp_pills.size() and opp_pills[idx].visible:
-			opp_pills[idx].kick(dir.normalized() * power)
-
-	for p in my_pills:
-		p.is_selected = false
-	selected_pill = null
-
-func _on_elimination_received(eliminations: Array):
-	elim_sfx.play()
-	phase = Phase.ELIMINATION
-	elim_timer = 1.5
-	var alive_my := _alive_pills(my_pills).size()
-	var alive_opp := _alive_pills(opp_pills).size()
-	center_msg.text = "Units — You: %d   Opp: %d" % [alive_my, alive_opp]
-	center_msg.visible = true
 
 func _on_game_over(winner_id: String, reason: String, _scores: Dictionary):
 	phase = Phase.GAME_OVER
@@ -244,19 +210,13 @@ func _process(delta: float):
 				aim_timer = 0.0
 				_submit_all_shots()
 		Phase.EXECUTING:
-			_apply_pit_gravity(delta)
-			settle_timer += delta
-			if settle_timer > 0.5:
-				phase = Phase.SETTLING
-				settle_timer = 0.0
-		Phase.SETTLING:
-			_apply_pit_gravity(delta)
-			if _all_stopped():
-				settle_timer += delta
-				if settle_timer >= Constants.SETTLE_GRACE_TIME:
-					_report_round_result()
-			else:
-				settle_timer = 0.0
+			replay_timer += delta
+			while replay_timer >= FRAME_DT and replay_idx < trajectory.size():
+				_set_positions(trajectory[replay_idx])
+				replay_idx += 1
+				replay_timer -= FRAME_DT
+			if replay_idx >= trajectory.size():
+				_on_replay_complete()
 		Phase.ELIMINATION:
 			elim_timer -= delta
 			if elim_timer <= 0.0:
@@ -279,35 +239,61 @@ func _submit_all_shots():
 		shots_arr.append({"pill_idx": idx, "dir": shot.dir, "power": shot.power})
 	Online.submit_multi_shot(shots_arr)
 
-func _report_round_result():
-	if not i_am_player1:
-		phase = Phase.WAITING
-		return
-	var eliminations: Array = []
-	var my_id := Online.user_id
-	var opp_id := Online.opponent_user_id
+# ── Trajectory replay ──
 
-	for i in range(my_pills.size()):
-		var pill: Pill = my_pills[i]
-		if not pill.visible:
-			continue
-		if pill.position.distance_to(pit_center) < Constants.PIT_RADIUS * 0.6:
-			_eliminate_pill(pill)
-			var uid: String = my_id if i_am_player1 else opp_id
-			eliminations.append({"user_id": uid, "pill_idx": i})
+func _set_positions(frame: Array):
+	var origin := Constants.FIELD_RECT.position
+	for i in range(mini(3, frame.size())):
+		var pos := origin + Vector2(float(frame[i][0]), float(frame[i][1]))
+		if i_am_player1:
+			my_pills[i].position = pos
+		else:
+			opp_pills[i].position = pos
+	for i in range(3, mini(6, frame.size())):
+		var pos := origin + Vector2(float(frame[i][0]), float(frame[i][1]))
+		if i_am_player1:
+			opp_pills[i - 3].position = pos
+		else:
+			my_pills[i - 3].position = pos
 
-	for i in range(opp_pills.size()):
-		var pill: Pill = opp_pills[i]
-		if not pill.visible:
-			continue
-		if pill.position.distance_to(pit_center) < Constants.PIT_RADIUS * 0.6:
-			_eliminate_pill(pill)
-			var uid: String = opp_id if i_am_player1 else my_id
-			eliminations.append({"user_id": uid, "pill_idx": i})
+func _apply_positions_from_server(positions: Dictionary):
+	var origin := Constants.FIELD_RECT.position
+	var p1_data: Array = positions.get("p1", [])
+	var p2_data: Array = positions.get("p2", [])
+	var my_data: Array = p1_data if i_am_player1 else p2_data
+	var opp_data: Array = p2_data if i_am_player1 else p1_data
+	for i in range(mini(my_data.size(), my_pills.size())):
+		my_pills[i].position = origin + Vector2(float(my_data[i][0]), float(my_data[i][1]))
+		if my_data[i].size() > 2:
+			my_pills[i].visible = bool(my_data[i][2])
+	for i in range(mini(opp_data.size(), opp_pills.size())):
+		opp_pills[i].position = origin + Vector2(float(opp_data[i][0]), float(opp_data[i][1]))
+		if opp_data[i].size() > 2:
+			opp_pills[i].visible = bool(opp_data[i][2])
 
-	Online.report_elimination_result(eliminations, _collect_positions())
+func _on_replay_complete():
+	_set_positions(sim_data.get("final_positions", []))
+	var eliminations: Array = sim_data.get("eliminations", [])
+	var is_game_over = sim_data.get("game_over", false)
 
-	if eliminations.size() > 0:
+	for elim in eliminations:
+		var uid: String = str(elim.get("user_id", ""))
+		var pill_idx: int = int(elim.get("pill_idx", 0))
+		if uid == Online.user_id:
+			if pill_idx >= 0 and pill_idx < my_pills.size():
+				_eliminate_pill(my_pills[pill_idx])
+		else:
+			if pill_idx >= 0 and pill_idx < opp_pills.size():
+				_eliminate_pill(opp_pills[pill_idx])
+
+	if is_game_over:
+		var winner = sim_data.get("winner", "")
+		phase = Phase.GAME_OVER
+		center_msg.text = "YOU WIN!" if winner == Online.user_id else "YOU LOSE!"
+		center_msg.visible = true
+		battle_music.stop()
+		win_sfx.play()
+	elif eliminations.size() > 0:
 		elim_sfx.play()
 		phase = Phase.ELIMINATION
 		elim_timer = 1.5
@@ -317,55 +303,9 @@ func _report_round_result():
 		center_msg.visible = true
 	else:
 		phase = Phase.WAITING
+		Online.send_ready()
 
-func _collect_positions() -> Dictionary:
-	var origin := Constants.FIELD_RECT.position
-	var p1 := []
-	var p2 := []
-	for p in my_pills:
-		var rel: Vector2 = p.position - origin
-		p1.append([rel.x, rel.y, p.visible])
-	for p in opp_pills:
-		var rel: Vector2 = p.position - origin
-		p2.append([rel.x, rel.y, p.visible])
-	return {"p1": p1, "p2": p2}
-
-func _apply_synced_positions(positions: Dictionary) -> void:
-	var origin := Constants.FIELD_RECT.position
-	var p1_data: Array = positions.get("p1", [])
-	var p2_data: Array = positions.get("p2", [])
-	var my_data: Array = p1_data if i_am_player1 else p2_data
-	var opp_data: Array = p2_data if i_am_player1 else p1_data
-	for i in range(mini(my_data.size(), my_pills.size())):
-		var d: Array = my_data[i]
-		var target := origin + Vector2(float(d[0]), float(d[1]))
-		my_pills[i].position = target
-		my_pills[i].linear_velocity = Vector2.ZERO
-		if d.size() > 2:
-			my_pills[i].visible = bool(d[2])
-			my_pills[i].freeze = not bool(d[2])
-	for i in range(mini(opp_data.size(), opp_pills.size())):
-		var d: Array = opp_data[i]
-		var target := origin + Vector2(float(d[0]), float(d[1]))
-		opp_pills[i].position = target
-		opp_pills[i].linear_velocity = Vector2.ZERO
-		if d.size() > 2:
-			opp_pills[i].visible = bool(d[2])
-			opp_pills[i].freeze = not bool(d[2])
-
-# ── Pit mechanics ──
-
-func _apply_pit_gravity(delta: float):
-	for pill in my_pills + opp_pills:
-		if not pill.visible:
-			continue
-		var dist: float = pill.position.distance_to(pit_center)
-		if dist < Constants.PIT_RADIUS * 0.6:
-			_eliminate_pill(pill)
-		elif dist < Constants.PIT_PULL_RADIUS:
-			var pull_dir: Vector2 = (pit_center - pill.position).normalized()
-			var strength: float = Constants.PIT_PULL_STRENGTH * (1.0 - dist / Constants.PIT_PULL_RADIUS)
-			pill.apply_central_force(pull_dir * strength)
+# ── Pill helpers ──
 
 func _eliminate_pill(pill: Pill):
 	if not pill.visible:
@@ -380,12 +320,6 @@ func _alive_pills(pills: Array) -> Array:
 		if p.visible:
 			result.append(p)
 	return result
-
-func _all_stopped() -> bool:
-	for pill in my_pills + opp_pills:
-		if pill.visible and not pill.is_stopped():
-			return false
-	return true
 
 # ── Input ──
 
@@ -601,7 +535,7 @@ func _update_hud():
 				timer_bar_style.bg_color = Color(0.95, 0.85, 0.1)
 			else:
 				timer_bar_style.bg_color = Color(0.95, 0.2, 0.15)
-		Phase.EXECUTING, Phase.SETTLING:
+		Phase.EXECUTING:
 			timer_bar.visible = false
 		Phase.ELIMINATION:
 			timer_bar.visible = false
@@ -690,12 +624,7 @@ func _build_pit():
 	pit_area.add_child(col)
 	pit_area.collision_layer = 0
 	pit_area.collision_mask = 1
-	pit_area.body_entered.connect(_on_pit_body_entered)
 	add_child(pit_area)
-
-func _on_pit_body_entered(body: Node2D):
-	if body is Pill and body.visible:
-		_eliminate_pill(body)
 
 func _build_pills():
 	var my_starts: Array = Constants.BATTLE_PLAYER_START if i_am_player1 else Constants.BATTLE_AI_START
@@ -712,6 +641,7 @@ func _build_pills():
 		p.pill_color = my_color
 		p.pill_color_light = my_color_light
 		p.position = my_starts[i]
+		p.freeze = true
 		add_child(p)
 		my_pills.append(p)
 
@@ -722,6 +652,7 @@ func _build_pills():
 		p.pill_color = opp_color
 		p.pill_color_light = opp_color_light
 		p.position = opp_starts[i]
+		p.freeze = true
 		add_child(p)
 		opp_pills.append(p)
 

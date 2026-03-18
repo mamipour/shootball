@@ -1,9 +1,6 @@
 extends Node2D
 
-# Online multiplayer Curling mode.
-# Alternating single-shot turns, 6 shots per end, proximity scoring.
-
-enum Phase { WAITING, MY_AIM, OPP_AIM, EXECUTING, SETTLING, END_SCORED, GAME_OVER }
+enum Phase { WAITING, MY_AIM, OPP_AIM, EXECUTING, END_SCORED, GAME_OVER }
 
 # ── Nodes ──
 var my_pills: Array = []
@@ -45,11 +42,15 @@ var aim_pow: float = 0.0
 # ── Timer ──
 var aim_timer: float = 0.0
 
-# ── Settling ──
-var settle_timer: float = 0.0
-
 # ── End score display ──
 var end_timer: float = 0.0
+
+# ── Trajectory replay ──
+var trajectory: Array = []
+var sim_data: Dictionary = {}
+var replay_idx: int = 0
+var replay_timer: float = 0.0
+const FRAME_DT := 0.05
 
 # ── Assets ──
 var ice_texture: Texture2D = null
@@ -77,9 +78,7 @@ func _ready():
 
 	Online.match_started.connect(_on_match_started)
 	Online.curling_turn_started.connect(_on_curling_turn)
-	Online.shots_received.connect(_on_shots_received)
-	Online.curling_end_scored.connect(_on_curling_end_scored)
-	Online.goal_scored.connect(_on_goal_scored)
+	Online.sim_result_received.connect(_on_sim_result)
 	Online.game_over.connect(_on_game_over)
 	Online.opponent_left.connect(_on_opponent_left)
 	Online.timer_sync.connect(_on_timer_sync)
@@ -152,21 +151,19 @@ func _rebuild_pills():
 
 func _on_match_started(p_round: int, _p_aim_time: float, positions: Dictionary = {}):
 	if positions is Dictionary and positions.size() > 0:
-		_apply_synced_positions(positions)
+		_apply_positions_from_server(positions)
 	end_num = p_round
 	my_used.clear()
 	opp_used.clear()
 	shot_number = 0
-	settle_timer = 0.0
 	center_msg.visible = false
 	_clear_aim()
 
 func _on_curling_turn(whose_turn: String, p_shot_number: int, p_aim_time: float, positions: Dictionary = {}):
 	if positions is Dictionary and positions.size() > 0:
-		_apply_synced_positions(positions)
+		_apply_positions_from_server(positions)
 	shot_number = p_shot_number
 	aim_timer = p_aim_time
-	settle_timer = 0.0
 	_clear_aim()
 
 	var my_side := "player1" if i_am_player1 else "player2"
@@ -179,53 +176,13 @@ func _on_curling_turn(whose_turn: String, p_shot_number: int, p_aim_time: float,
 	else:
 		phase = Phase.OPP_AIM
 
-func _on_shots_received(p1_shot: Dictionary, p2_shot: Dictionary):
+func _on_sim_result(data: Dictionary):
+	trajectory = data.get("frames", [])
+	sim_data = data
+	replay_idx = 0
+	replay_timer = 0.0
+	shot_number = int(data.get("shot_number", shot_number))
 	phase = Phase.EXECUTING
-	settle_timer = 0.0
-
-	var my_shot: Dictionary = p1_shot if i_am_player1 else p2_shot
-	var opp_shot: Dictionary = p2_shot if i_am_player1 else p1_shot
-
-	if my_shot.has("shot") and my_shot.shot != null:
-		var s: Dictionary = my_shot.shot
-		var idx: int = int(s.get("pill_idx", 0))
-		var dir := Vector2(float(s.get("dir_x", 0)), float(s.get("dir_y", 0)))
-		var power: float = float(s.get("power", 0))
-		if idx >= 0 and idx < 3 and power > 0:
-			my_pills[idx].kick(dir.normalized() * power)
-			if idx not in my_used:
-				my_used.append(idx)
-
-	if opp_shot.has("shot") and opp_shot.shot != null:
-		var s: Dictionary = opp_shot.shot
-		var idx: int = int(s.get("pill_idx", 0))
-		var dir := Vector2(float(s.get("dir_x", 0)), float(s.get("dir_y", 0)))
-		var power: float = float(s.get("power", 0))
-		if idx >= 0 and idx < 3 and power > 0:
-			opp_pills[idx].kick(dir.normalized() * power)
-			if idx not in opp_used:
-				opp_used.append(idx)
-
-	if selected_pill != null:
-		selected_pill.is_selected = false
-		selected_pill = null
-
-func _on_curling_end_scored(winner: String, points: int, scores: Dictionary):
-	score_sfx.play()
-	_update_scores_from_server(scores)
-	phase = Phase.END_SCORED
-	end_timer = 2.5
-	var my_side := "player1" if i_am_player1 else "player2"
-	if winner == "":
-		center_msg.text = "Blank end!"
-	elif winner == my_side:
-		center_msg.text = "You +%d!" % points
-	else:
-		center_msg.text = "Opp +%d!" % points
-	center_msg.visible = true
-
-func _on_goal_scored(_scorer_id: String, scores: Dictionary):
-	_update_scores_from_server(scores)
 
 func _on_game_over(winner_id: String, reason: String, scores: Dictionary):
 	_update_scores_from_server(scores)
@@ -276,17 +233,13 @@ func _process(delta: float):
 		Phase.OPP_AIM:
 			pass
 		Phase.EXECUTING:
-			settle_timer += delta
-			if settle_timer > 0.5:
-				phase = Phase.SETTLING
-				settle_timer = 0.0
-		Phase.SETTLING:
-			if _all_stopped():
-				settle_timer += delta
-				if settle_timer >= Constants.SETTLE_GRACE_TIME:
-					_on_shot_settled()
-			else:
-				settle_timer = 0.0
+			replay_timer += delta
+			while replay_timer >= FRAME_DT and replay_idx < trajectory.size():
+				_set_positions(trajectory[replay_idx])
+				replay_idx += 1
+				replay_timer -= FRAME_DT
+			if replay_idx >= trajectory.size():
+				_on_replay_complete()
 		Phase.END_SCORED:
 			end_timer -= delta
 			if end_timer <= 0.0:
@@ -312,6 +265,8 @@ func _player_fire():
 		return
 	var pill_idx: int = my_pills.find(selected_pill)
 	Online.submit_shot(pill_idx, aim_dir, aim_pow)
+	if pill_idx not in my_used:
+		my_used.append(pill_idx)
 	selected_pill.is_selected = false
 	selected_pill = null
 	phase = Phase.WAITING
@@ -324,114 +279,84 @@ func _player_timeout():
 		var pill: Pill = available[0]
 		var idx: int = my_pills.find(pill)
 		Online.submit_shot(idx, Vector2.ZERO, 0.0)
+		if idx not in my_used:
+			my_used.append(idx)
 	if selected_pill != null:
 		selected_pill.is_selected = false
 	selected_pill = null
 	phase = Phase.WAITING
 
-func _on_shot_settled():
-	if not i_am_player1:
-		phase = Phase.WAITING
-		return
-	if shot_number >= 6:
-		_report_end_scores()
-	else:
-		Online.report_curling_shot_settled(_collect_positions())
-		phase = Phase.WAITING
-
-func _report_end_scores():
-	var center: Vector2 = _house_center()
-	var outer_r: float = Constants.HOUSE_RADIUS_OUTER
-
-	var my_dists: Array[float] = []
-	var opp_dists: Array[float] = []
-	for p in my_pills:
-		var d: float = p.position.distance_to(center)
-		if d <= outer_r:
-			my_dists.append(d)
-	for a in opp_pills:
-		var d: float = a.position.distance_to(center)
-		if d <= outer_r:
-			opp_dists.append(d)
-
-	my_dists.sort()
-	opp_dists.sort()
-
-	var points: int = 0
-	var winner_id: String = ""
-	var pos := _collect_positions()
-
-	if my_dists.is_empty() and opp_dists.is_empty():
-		Online.report_curling_end_result("", 0, pos)
-		return
-
-	if opp_dists.is_empty():
-		points = my_dists.size()
-		winner_id = Online.user_id
-	elif my_dists.is_empty():
-		points = opp_dists.size()
-		winner_id = Online.opponent_user_id
-	elif my_dists[0] < opp_dists[0]:
-		winner_id = Online.user_id
-		for d in my_dists:
-			if d < opp_dists[0]:
-				points += 1
-			else:
-				break
-	else:
-		winner_id = Online.opponent_user_id
-		for d in opp_dists:
-			if d < my_dists[0]:
-				points += 1
-			else:
-				break
-
-	Online.report_curling_end_result(winner_id, points, pos)
-
 func _house_center() -> Vector2:
 	var f: Rect2 = Constants.FIELD_RECT
 	return Vector2(f.position.x + f.size.x / 2.0, f.position.y + f.size.y / 2.0)
 
-func _collect_positions() -> Dictionary:
-	var origin := Constants.FIELD_RECT.position
-	var p1 := []
-	var p2 := []
-	for p in my_pills:
-		var rel: Vector2 = p.position - origin
-		p1.append([rel.x, rel.y])
-	for p in opp_pills:
-		var rel: Vector2 = p.position - origin
-		p2.append([rel.x, rel.y])
-	return {"p1": p1, "p2": p2}
+# ── Trajectory replay ──
 
-func _apply_synced_positions(positions: Dictionary) -> void:
+func _set_positions(frame: Array):
+	var origin := Constants.FIELD_RECT.position
+	for i in range(mini(3, frame.size())):
+		var pos := origin + Vector2(float(frame[i][0]), float(frame[i][1]))
+		if i_am_player1:
+			my_pills[i].position = pos
+		else:
+			opp_pills[i].position = pos
+	for i in range(3, mini(6, frame.size())):
+		var pos := origin + Vector2(float(frame[i][0]), float(frame[i][1]))
+		if i_am_player1:
+			opp_pills[i - 3].position = pos
+		else:
+			my_pills[i - 3].position = pos
+
+func _apply_positions_from_server(positions: Dictionary):
 	var origin := Constants.FIELD_RECT.position
 	var p1_data: Array = positions.get("p1", [])
 	var p2_data: Array = positions.get("p2", [])
 	var my_data: Array = p1_data if i_am_player1 else p2_data
 	var opp_data: Array = p2_data if i_am_player1 else p1_data
 	for i in range(mini(my_data.size(), my_pills.size())):
-		var target := origin + Vector2(float(my_data[i][0]), float(my_data[i][1]))
-		my_pills[i].position = target
-		my_pills[i].linear_velocity = Vector2.ZERO
+		my_pills[i].position = origin + Vector2(float(my_data[i][0]), float(my_data[i][1]))
 	for i in range(mini(opp_data.size(), opp_pills.size())):
-		var target := origin + Vector2(float(opp_data[i][0]), float(opp_data[i][1]))
-		opp_pills[i].position = target
-		opp_pills[i].linear_velocity = Vector2.ZERO
+		opp_pills[i].position = origin + Vector2(float(opp_data[i][0]), float(opp_data[i][1]))
 
-func _all_stopped() -> bool:
-	for pill in my_pills + opp_pills:
-		if not pill.is_stopped():
-			return false
-	return true
+func _on_replay_complete():
+	_set_positions(sim_data.get("final_positions", []))
+	var is_game_over = sim_data.get("game_over", false)
+	var end_scored = sim_data.get("end_scored", false)
+
+	if is_game_over:
+		var winner = sim_data.get("winner", "")
+		_update_scores_from_server(sim_data.get("scores", {}))
+		phase = Phase.GAME_OVER
+		center_msg.text = "YOU WIN!" if winner == Online.user_id else "YOU LOSE!"
+		center_msg.visible = true
+		music.stop()
+		win_sfx.play()
+	elif end_scored:
+		score_sfx.play()
+		_update_scores_from_server(sim_data.get("scores", {}))
+		phase = Phase.END_SCORED
+		end_timer = 2.5
+		var end_winner = sim_data.get("end_winner", "")
+		var end_points = int(sim_data.get("end_points", 0))
+		var my_side := "player1" if i_am_player1 else "player2"
+		if end_winner == "":
+			center_msg.text = "Blank end!"
+		elif end_winner == my_side:
+			center_msg.text = "You +%d!" % end_points
+		else:
+			center_msg.text = "Opp +%d!" % end_points
+		center_msg.visible = true
+	else:
+		phase = Phase.WAITING
+		Online.send_ready()
 
 func _reset_all():
 	var my_starts: Array = Constants.PLAYER_START if i_am_player1 else Constants.AI_START
 	var opp_starts: Array = Constants.AI_START if i_am_player1 else Constants.PLAYER_START
 	for i in range(3):
-		my_pills[i].reset_to(my_starts[i])
+		my_pills[i].position = my_starts[i]
 	for i in range(3):
-		opp_pills[i].reset_to(opp_starts[i])
+		opp_pills[i].position = opp_starts[i]
 
 # ── Input ──
 
@@ -610,7 +535,7 @@ func _update_hud():
 			timer_bar.visible = false
 			turn_indicator.text = "▶ OPP SHOT"
 			turn_indicator.add_theme_color_override("font_color", Color(1.0, 0.5, 0.3))
-		Phase.EXECUTING, Phase.SETTLING:
+		Phase.EXECUTING:
 			timer_bar.visible = false
 			turn_indicator.text = "Shot %d / 6" % shot_number if shot_number <= 6 else ""
 		Phase.END_SCORED:
@@ -661,6 +586,7 @@ func _build_pills():
 		p.pill_color_light = my_color_light
 		p.position = my_starts[i]
 		p.linear_damp = Constants.CURLING_PILL_DAMP
+		p.freeze = true
 		add_child(p)
 		my_pills.append(p)
 
@@ -672,6 +598,7 @@ func _build_pills():
 		p.pill_color_light = opp_color_light
 		p.position = opp_starts[i]
 		p.linear_damp = Constants.CURLING_PILL_DAMP
+		p.freeze = true
 		add_child(p)
 		opp_pills.append(p)
 
